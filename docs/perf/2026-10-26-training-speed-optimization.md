@@ -69,3 +69,17 @@ scripts/bench_step_phases.py
 2. rsl_rl rollout 瘦身 spike（不动算法，只动数据通路）
 3. reward 条件注册改造（env_cfg 按 DIVEWALL_PHASE_* 开关注册，而非计算后置零）
 4. 训练期精简碰撞集实验（保持 sim2real 部署用全碰撞模型）
+
+## 七、njmax=128 实跑验证（2026-10-26 15:15）
+
+30 iter scratch 短跑对比（同种子、同 B24 配置）：
+
+| 指标 | 基线 njmax=1500 | njmax=128 |
+|---|---|---|
+| Iteration time | 1.30-1.32 s | **1.15-1.16 s** |
+| Steps/s | 37,218 | **42,574** |
+| Collection / Learning | 1.22 / 0.101 s | 1.05 / 0.101 s |
+| Mean reward (iter 29) | -1.70 | -1.56 |
+| wall_flight / heading_hold / air_time_mean | 0.0051 / 0.4411 / 0.5214 | 0.0050 / 0.4107 / 0.5085 |
+
+**结论：端到端 1.14x（bench 预测 env.step 层 1.27x，learning 0.1s 固定开销摊薄后吻合），学习指标一致（差异在噪声级）。✅ 建议合入正式训练配置。**
