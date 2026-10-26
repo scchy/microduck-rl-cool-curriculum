@@ -14,12 +14,12 @@ export DIVEWALL_WALL_SINK=0.115
 export DIVEWALL_POSTDIVE_PROB=0.0
 export DIVEWALL_PHASE_A4=1
 
-LOAD_RUN=2026-10-14_12-16-27_microduck_roulade_divewall_run15
-LOAD_CKPT=model_80489.pt
-MAX_ITER=6000
+LOAD_RUN="${LOAD_RUN:-2026-10-14_12-16-27_microduck_roulade_divewall_run15}"  # 可被课程链主脚本覆盖
+LOAD_CKPT="${LOAD_CKPT:-model_80489.pt}"  # 可被课程链主脚本覆盖
+MAX_ITER="${MAX_ITER:-6000}"
 
 LOG=logs/train_phaseA4_jump.log
-for ENVS in 2048 1024; do
+for ENVS in ${ENVS_LIST:-4096 2048}; do  # perf: 2026-10-27 起 4096 档 (+31%), OOM 回落 2048
   echo "=== [Phase-A v4 jump school] warm=$LOAD_RUN/$LOAD_CKPT envs=$ENVS max_iter=$MAX_ITER @ $(date) ==="
   .venv/bin/python -m mjlab_microduck.train_cli Mjlab-RouladeDiveWall-Flat-MicroDuck \
     --env.scene.num-envs "$ENVS" \
