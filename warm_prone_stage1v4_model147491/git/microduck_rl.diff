@@ -1,0 +1,2197 @@
+--- git commit ---
+d424a0c899f6b33cbd3daeb279913134349c0b63
+
+
+--- git status ---
+On branch develop
+Your branch is up to date with 'origin/develop'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   pyproject.toml
+	modified:   src/mjlab_microduck/robot/microduck_constants.py
+	modified:   src/mjlab_microduck/tasks/__init__.py
+	modified:   src/mjlab_microduck/tasks/mdp.py
+	modified:   src/mjlab_microduck/tasks/microduck_ground_pick_env_cfg.py
+	modified:   src/mjlab_microduck/tasks/microduck_roulade_env_cfg.py
+	modified:   src/mjlab_microduck/tasks/microduck_sitstand_env_cfg.py
+	modified:   src/mjlab_microduck/tasks/microduck_velocity_env_cfg.py
+	modified:   uv.lock
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	abort_curric25b_flop/
+	floppy_curric21v2_model147491/
+	nograd_curric21v3_model147491/
+	prone_curric25_model147491/
+	scripts/eval_roulade_battery.py
+	scripts/eval_velocity_buckets.py
+	scripts/fix_rough_0910.sh
+	scripts/handoff_eval_vx.py
+	scripts/handoff_rollout.py
+	scripts/handoff_rollout_run4.py
+	scripts/jump_probe.py
+	scripts/make_actor_warmstart.py
+	scripts/make_gifs.sh
+	scripts/make_gifs2.sh
+	scripts/probe_run_vx.py
+	scripts/probe_wall_behavior.py
+	scripts/train_dive_run1.sh
+	scripts/train_dive_run1_when_gpu_free.sh
+	scripts/train_dive_run2.sh
+	scripts/train_dive_run3.sh
+	scripts/train_dive_run4.sh
+	scripts/train_divewall.sh
+	scripts/train_divewall2.sh
+	scripts/train_divewall3.sh
+	scripts/train_divewall_curric_stage1.sh
+	scripts/train_divewall_curric_stage21.sh
+	scripts/train_divewall_curric_stage21v2.sh
+	scripts/train_divewall_curric_stage21v3.sh
+	scripts/train_divewall_curric_stage21v4.sh
+	scripts/train_divewall_curric_stage21v5.sh
+	scripts/train_divewall_curric_stage22.sh
+	scripts/train_divewall_curric_stage25.sh
+	scripts/train_divewall_curric_stage25b.sh
+	scripts/train_divewall_run10.sh
+	scripts/train_divewall_run11.sh
+	scripts/train_divewall_run12.sh
+	scripts/train_divewall_run13.sh
+	scripts/train_divewall_run14.sh
+	scripts/train_divewall_run15_stage1.sh
+	scripts/train_divewall_run15_stage1b.sh
+	scripts/train_divewall_run15_stage2.sh
+	scripts/train_divewall_run15_stage2b.sh
+	scripts/train_divewall_run15_stage2c.sh
+	scripts/train_divewall_run15_stage2d.sh
+	scripts/train_divewall_run15_stage2e.sh
+	scripts/train_divewall_run8.sh
+	scripts/train_divewall_run8b.sh
+	scripts/train_divewall_run8c.sh
+	scripts/train_divewall_run9.sh
+	scripts/train_queue.sh
+	scripts/train_queue2.sh
+	scripts/train_queue3.sh
+	scripts/train_queue_oom_retry.sh
+	scripts/train_run6_continue.sh
+	scripts/train_run6_kipup.sh
+	scripts/train_velocity_fast.sh
+	scripts/train_velocity_fast2.sh
+	scripts/train_velocity_fast3.sh
+	scripts/video_rollout.py
+	scripts/wait_gpu_run6.sh
+	scripts/watch_then_run4.sh
+	src/mjlab_microduck/robot/microduck/wall.xml
+	tests/test_roulade_kipup.py
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/pyproject.toml b/pyproject.toml
+index 479431f..8cdb0d8 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -77,7 +77,8 @@ override-dependencies = [
+ # mjlab now comes from PyPI (==1.3.0, pinned in [project.dependencies]); no git source.
+ # Official BAM actuator model. Switch to `main` (or a tag) once the
+ # mjlab-facing API lands there.
+-better-actuator-models = { git = "https://github.com/Rhoban/bam.git", branch = "mjlab_frictionloss" }
++# better-actuator-models = { git = "https://github.com/Rhoban/bam.git", branch = "mjlab_frictionloss" }
++better-actuator-models = { path = "../bam" }
+ # For local BAM development, comment the line above and use:
+ # better-actuator-models = { path = "/home/antoine/Rhoban/bam", editable = true }
+ # On linux-aarch64 (DGX Spark / GB10) PyPI's torch wheel is CPU-ONLY:
+diff --git a/src/mjlab_microduck/robot/microduck_constants.py b/src/mjlab_microduck/robot/microduck_constants.py
+index 8aa7b23..322e470 100644
+--- a/src/mjlab_microduck/robot/microduck_constants.py
++++ b/src/mjlab_microduck/robot/microduck_constants.py
+@@ -18,6 +18,7 @@ MICRODUCK_WALK_XML: Path = _ROBOT_DIR / "robot_walk.xml"
+ MICRODUCK_ALLCOLLISIONS_XML: Path = _ROBOT_DIR / "robot_allcollisions.xml"
+ # 70mm / 15g ball prop for the BallKick task.
+ MICRODUCK_BALL_XML: Path = _ROBOT_DIR / "ball.xml"
++MICRODUCK_WALL_XML: Path = _ROBOT_DIR / "wall.xml"
+ # Roller-skate model: 14 actuated joints + passive wheel hinges (passive_*wheel).
+ MICRODUCK_ALLCOLLISIONS_ROLLERS_XML: Path = _ROBOT_DIR / "robot_allcollisions_rollers.xml"
+ # Backlash models: every servo joint gets an unactuated passive_<joint>_backlash
+@@ -30,6 +31,7 @@ MICRODUCK_ALLCOLLISIONS_ROLLERS_BACKLASH_XML: Path = _ROBOT_DIR / "robot_allcoll
+ assert MICRODUCK_WALK_XML.exists(), f"XML not found: {MICRODUCK_WALK_XML}"
+ assert MICRODUCK_ALLCOLLISIONS_XML.exists(), f"XML not found: {MICRODUCK_ALLCOLLISIONS_XML}"
+ assert MICRODUCK_BALL_XML.exists(), f"XML not found: {MICRODUCK_BALL_XML}"
++assert MICRODUCK_WALL_XML.exists(), f"XML not found: {MICRODUCK_WALL_XML}"
+ assert MICRODUCK_ALLCOLLISIONS_ROLLERS_XML.exists(), f"XML not found: {MICRODUCK_ALLCOLLISIONS_ROLLERS_XML}"
+ assert MICRODUCK_ALLCOLLISIONS_BACKLASH_XML.exists(), f"XML not found: {MICRODUCK_ALLCOLLISIONS_BACKLASH_XML}"
+ assert MICRODUCK_WALK_BACKLASH_XML.exists(), f"XML not found: {MICRODUCK_WALK_BACKLASH_XML}"
+@@ -58,6 +60,10 @@ def get_ball_spec() -> mujoco.MjSpec:
+     return mujoco.MjSpec.from_file(str(MICRODUCK_BALL_XML))
+ 
+ 
++def get_wall_spec() -> mujoco.MjSpec:
++    return mujoco.MjSpec.from_file(str(MICRODUCK_WALL_XML))
++
++
+ def get_backlash_spec() -> mujoco.MjSpec:
+     return mujoco.MjSpec.from_file(str(MICRODUCK_ALLCOLLISIONS_BACKLASH_XML))
+ 
+@@ -234,6 +240,13 @@ MICRODUCK_BALL_CFG = EntityCfg(
+     init_state=EntityCfg.InitialStateCfg(pos=(0.3, 0.0, 0.035)),
+ )
+ 
++# Heavy low hurdle for the dive-wall variant (see wall.xml). Repositioned at
++# every reset by mdp.reset_wall_ahead, ahead of the robot's spawn yaw.
++MICRODUCK_WALL_CFG = EntityCfg(
++    spec_fn=get_wall_spec,
++    init_state=EntityCfg.InitialStateCfg(pos=(0.3, 0.0, 0.06)),
++)
++
+ # Roller skate robot: the 4 passive wheel joints (passive_*wheel) have no XML
+ # actuators; the BAM cfg's target regex already excludes them, so the action
+ # space stays 14-dimensional. Uses the SAME canonical BAM actuator as every
+diff --git a/src/mjlab_microduck/tasks/__init__.py b/src/mjlab_microduck/tasks/__init__.py
+index 9e69fac..cc4109d 100644
+--- a/src/mjlab_microduck/tasks/__init__.py
++++ b/src/mjlab_microduck/tasks/__init__.py
+@@ -17,7 +17,13 @@ class MicroduckOnPolicyRunner(VelocityOnPolicyRunner):
+ 
+ from .microduck_velocity_env_cfg import (
+     make_microduck_velocity_env_cfg,
++    make_microduck_velocity_fast_env_cfg,
++    make_microduck_velocity_fast2_env_cfg,
++    make_microduck_velocity_fast3_env_cfg,
+     MicroduckRlCfg,
++    MicroduckVelocityFastRlCfg,
++    MicroduckVelocityFast2RlCfg,
++    MicroduckVelocityFast3RlCfg,
+ )
+ from .microduck_standup_env_cfg import (
+     make_microduck_standup_env_cfg,
+@@ -65,7 +71,11 @@ from .microduck_spin_env_cfg import (
+ )
+ from .microduck_roulade_env_cfg import (
+     make_microduck_roulade_env_cfg,
++    make_microduck_roulade_dive_env_cfg,
++    make_microduck_roulade_divewall_env_cfg,
+     MicroduckRouladeRlCfg,
++    MicroduckRouladeDiveRlCfg,
++    MicroduckRouladeDiveWallRlCfg,
+ )
+ from .backlash import make_backlash_variant
+ 
+@@ -86,6 +96,35 @@ register_mjlab_task(
+     runner_cls=MicroduckOnPolicyRunner,
+ )
+ 
++# Velocity-fast — same policy structure, lin_vel_x widened to (-0.4, 1.2)
++# so the walk can reach the dive élan range without momentum injection.
++register_mjlab_task(
++    task_id="Mjlab-VelocityFast-Flat-MicroDuck",
++    env_cfg=make_microduck_velocity_fast_env_cfg(),
++    play_env_cfg=make_microduck_velocity_fast_env_cfg(play=True),
++    rl_cfg=MicroduckVelocityFastRlCfg,
++    runner_cls=MicroduckOnPolicyRunner,
++)
++
++# Velocity-fast run2 — range curriculum + high-speed tracking bonus.
++register_mjlab_task(
++    task_id="Mjlab-VelocityFast2-Flat-MicroDuck",
++    env_cfg=make_microduck_velocity_fast2_env_cfg(),
++    play_env_cfg=make_microduck_velocity_fast2_env_cfg(play=True),
++    rl_cfg=MicroduckVelocityFast2RlCfg,
++    runner_cls=MicroduckOnPolicyRunner,
++)
++
++# Velocity-fast run3 — curriculum rebased on warm-start baseline so the
++# range actually widens stage by stage (run2 skipped all stages).
++register_mjlab_task(
++    task_id="Mjlab-VelocityFast3-Flat-MicroDuck",
++    env_cfg=make_microduck_velocity_fast3_env_cfg(),
++    play_env_cfg=make_microduck_velocity_fast3_env_cfg(play=True),
++    rl_cfg=MicroduckVelocityFast3RlCfg,
++    runner_cls=MicroduckOnPolicyRunner,
++)
++
+ # VelStand — walking + fall recovery + body pose control in one policy.
+ register_mjlab_task(
+     task_id="Mjlab-VelStand-Flat-MicroDuck",
+@@ -225,6 +264,28 @@ register_mjlab_task(
+     runner_cls=MicroduckOnPolicyRunner,
+ )
+ 
++# Dive-roll (前扑滚翻) — roulade entered with forward momentum + an airborne
++# dive-launch phase. Same roll/landing machinery; the élan spawn hook carries
++# 0.1–0.3 m/s of forward speed and roulade_dive_launch pays the entry.
++register_mjlab_task(
++    task_id="Mjlab-RouladeDive-Flat-MicroDuck",
++    env_cfg=make_microduck_roulade_dive_env_cfg(),
++    play_env_cfg=make_microduck_roulade_dive_env_cfg(play=True),
++    rl_cfg=MicroduckRouladeDiveRlCfg,
++    runner_cls=MicroduckOnPolicyRunner,
++)
++
++# Dive-wall — obstacle-forced dive: heavy 6cm hurdle ahead of every spawn;
++# vaulting it is the only route to a completed roll. Wall is training
++# scaffolding only (not in obs — policy stays proprioceptive).
++register_mjlab_task(
++    task_id="Mjlab-RouladeDiveWall-Flat-MicroDuck",
++    env_cfg=make_microduck_roulade_divewall_env_cfg(),
++    play_env_cfg=make_microduck_roulade_divewall_env_cfg(play=True),
++    rl_cfg=MicroduckRouladeDiveWallRlCfg,
++    runner_cls=MicroduckOnPolicyRunner,
++)
++
+ # Backlash variants — ±1° serial gear play per servo + encoder-through-backlash
+ # actuator feedback and joint obs (see tasks/backlash.py). Each family keeps its
+ # base task's collision model: Velocity → robot_walk_backlash.xml,
+diff --git a/src/mjlab_microduck/tasks/mdp.py b/src/mjlab_microduck/tasks/mdp.py
+index f8dfcba..81cd13c 100644
+--- a/src/mjlab_microduck/tasks/mdp.py
++++ b/src/mjlab_microduck/tasks/mdp.py
+@@ -1598,6 +1598,24 @@ def joint_torques_l2(
+     return torch.sum(torch.square(actuator_forces), dim=1)
+ 
+ 
++def action_rate_l2_bounded(
++    env: ManagerBasedRlEnv,
++    sq_cap: float = 25.0,
++) -> torch.Tensor:
++    """action_rate_l2 with a per-env cap (stage21v4 fix, 2026-10-06).
++
++    The stock sum-of-squares exploded to ~1e6-3e6 on isolated envs (single
++    wild action pair); at weight -0.1 each spike was a -1e5..-3e5 gradient
++    kick that repeatedly knocked the policy off its hop-learning track
++    (hop peaked 0.029 then decayed 5x). Capping the squared sum at sq_cap
++    keeps the shaping gradient but defuses the bombs.
++    """
++    raw = torch.sum(
++        torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1
++    )
++    return raw.clamp(max=sq_cap)
++
++
+ def joint_torque_rate_l2(
+     env: ManagerBasedRlEnv,
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+@@ -6678,6 +6696,13 @@ _HEAD_TOP_DOWN_MIN = 0.3
+ _FLAT_FULL = 0.5    # |lateral_axis_z| = sin(30°): full credit below
+ _FLAT_ZERO = 0.866  # sin(60°): zero credit above
+ 
++# Frontier crossing that starts the post-roll rise clock (run-6): matches the
++# LANDING_GATE_LO the cfg gates its landing family with. `_roulade_open_step`
++# records the absolute step each env first crossed it (late midroll spawns are
++# born past it — their rise clock starts at birth, which is the point).
++_RISE_OPEN_REF = math.radians(260.0)
++_ROULADE_OPEN_NEVER = 1e12
++
+ 
+ def _lateral_axis_z(quat: torch.Tensor) -> torch.Tensor:
+     """World-z component of the body's lateral (y) axis. 0 = flat/sagittal."""
+@@ -6713,6 +6738,7 @@ def _roulade_state(env: ManagerBasedRlEnv) -> tuple:
+         env._roulade_max = z.clone()
+         env._roulade_paid = z.clone()
+         env._roulade_head_latch = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++        env._roulade_open_step = torch.full((env.num_envs,), _ROULADE_OPEN_NEVER, device=env.device)
+         env._roulade_last_update_step = -1
+     return env._roulade_accum, env._roulade_max, env._roulade_paid
+ 
+@@ -6746,6 +6772,17 @@ def _update_roulade_accum(env: ManagerBasedRlEnv, asset: Entity) -> None:
+         delta = delta * (t * t * (3.0 - 2.0 * t))
+         env._roulade_accum = env._roulade_accum + delta
+         env._roulade_max = torch.maximum(env._roulade_max, env._roulade_accum)
++        # Rise clock (run-6): stamp the step each env first pushed the frontier
++        # past _RISE_OPEN_REF — the stand_tax ramp and post-roll timing read it.
++        newly_open = (env._roulade_max >= _RISE_OPEN_REF) & (
++            env._roulade_open_step >= _ROULADE_OPEN_NEVER
++        )
++        if newly_open.any():
++            env._roulade_open_step = torch.where(
++                newly_open,
++                torch.full_like(env._roulade_open_step, float(step)),
++                env._roulade_open_step,
++            )
+ 
+         head_contact = _sensor_any_contact(env, _ROULADE_HEAD_SENSOR)
+         if head_contact is not None:
+@@ -6908,6 +6945,14 @@ def reset_roulade_state(
+     accum[env_ids] = spawn_angle
+     max_accum[env_ids] = spawn_angle
+     paid[env_ids] = spawn_angle
++    # Rise clock: late midroll spawns are born past the gate reference — their
++    # stand_tax ramp starts at birth (the fold they spawn in is exactly the
++    # basin the ramp prices); everyone else waits for a real crossing.
++    env._roulade_open_step[env_ids] = torch.where(
++        spawn_angle >= _RISE_OPEN_REF,
++        torch.full_like(spawn_angle, float(env.common_step_counter)),
++        torch.full_like(spawn_angle, _ROULADE_OPEN_NEVER),
++    )
+     # Head latch: mid-roll spawns are considered already past the head phase
+     # (the reverse curriculum teaches roll COMPLETION; requiring a latch they
+     # never had the chance to earn would keep their landing gate shut forever).
+@@ -6920,6 +6965,7 @@ def roulade_progress(
+     target_angle: float = 2 * math.pi,
+     max_paid_rate: float = 3.0,
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++    wall_name: str | None = None,
+ ) -> torch.Tensor:
+     """Pay increments of the progress frontier, up to one full roll.
+ 
+@@ -6933,6 +6979,12 @@ def roulade_progress(
+     excess — the paid pointer still jumps to the frontier, it just pays the
+     capped amount. A violent whip therefore collects LESS total progress
+     reward than a controlled ≤cap roll, instead of the same total sooner.
++
++    wall_name (run-14 divewall): when set, progress increments earned BEFORE
++    the wall plane (signed fwd-dist < 0) are paid ZERO — the roll must land
++    PAST the wall to collect. (User spec 2026-10-04: 墙前面翻滚不能给 reward，
++    在墙附近前扑、墙后落地翻滚.) The frontier pointer still advances, so the
++    pre-wall rotation isn't double-paid after crossing either.
+     """
+     asset: Entity = env.scene[asset_cfg.name]
+     _update_roulade_accum(env, asset)
+@@ -6941,7 +6993,30 @@ def roulade_progress(
+     delta = torch.clamp(new_paid - torch.clamp(paid, max=target_angle), min=0.0)
+     delta = torch.clamp(delta, max=max_paid_rate * env.step_dt)
+     env._roulade_paid = torch.maximum(paid, new_paid)
+-    return delta / (env.step_dt * target_angle)
++    reward = delta / (env.step_dt * target_angle)
++    if wall_name is not None:
++        reward = reward * _past_wall_mask(env, asset, wall_name)
++    return reward
++
++
++def _past_wall_mask(
++    env: ManagerBasedRlEnv, asset: Entity, wall_name: str
++) -> torch.Tensor:
++    """Run-14 divewall helper: 1.0 once the robot's trunk is PAST the wall
++    plane (signed fwd-dist > 0), 0.0 while still on the approach side.
++    Yaw-safe via the trunk heading; NaN-safe; missing wall → ones."""
++    # NOTE: `wall_name in env.scene` is UNSAFE on mjlab Scene — __contains__
++    # iterates the string and raises KeyError per character. Probe by access.
++    try:
++        wall: Entity = env.scene[wall_name]
++    except KeyError:
++        return torch.ones(env.num_envs, device=env.device)
++    rpos = asset.data.root_link_pose_w
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
++    return (torch.nan_to_num(dist, nan=1.0) > 0.0).float()
+ 
+ 
+ def roulade_head_pivot(
+@@ -6951,6 +7026,7 @@ def roulade_head_pivot(
+     angle_hi: float = math.radians(240.0),
+     rate_norm: float = 2.0,
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++    wall_name: str | None = None,
+ ) -> torch.Tensor:
+     """Reward head-ground contact while rotating forward mid-roll.
+ 
+@@ -6975,7 +7051,10 @@ def roulade_head_pivot(
+     omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
+     rate = torch.clamp(torch.nan_to_num(omega_fwd, nan=0.0) / rate_norm, 0.0, 1.0)
+     top = 0.3 + 0.7 * _head_top_down(env, asset).float()
+-    return contact * in_window * rate * top
++    r = contact * in_window * rate * top
++    if wall_name is not None:
++        r = r * _past_wall_mask(env, asset, wall_name)
++    return r
+ 
+ 
+ def roulade_landing_composite(
+@@ -6989,6 +7068,7 @@ def roulade_landing_composite(
+     gate_hi: float = math.radians(330.0),
+     target_overrides: Optional[dict] = None,
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++    wall_name: str | None = None,
+ ) -> torch.Tensor:
+     """standing_composite_score × completion gate.
+ 
+@@ -7009,7 +7089,10 @@ def roulade_landing_composite(
+         target_overrides=target_overrides,
+         asset_cfg=asset_cfg,
+     )
+-    return score * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
++    r = score * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
++    if wall_name is not None:
++        r = r * _past_wall_mask(env, asset, wall_name)
++    return r
+ 
+ 
+ def roulade_upright_after_roll(
+@@ -7017,6 +7100,7 @@ def roulade_upright_after_roll(
+     gate_lo: float = math.radians(260.0),
+     gate_hi: float = math.radians(330.0),
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++    wall_name: str | None = None,
+ ) -> torch.Tensor:
+     """Linear cos(tilt) × completion gate — bootstrap pull toward vertical.
+ 
+@@ -7028,9 +7112,12 @@ def roulade_upright_after_roll(
+     _update_roulade_accum(env, asset)
+     quat = asset.data.root_link_quat_w
+     upright = 1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
+-    return torch.clamp(upright, min=0.0) * _roulade_completion_gate(
++    r = torch.clamp(upright, min=0.0) * _roulade_completion_gate(
+         env, gate_lo, gate_hi, require_head=True
+     )
++    if wall_name is not None:
++        r = r * _past_wall_mask(env, asset, wall_name)
++    return r
+ 
+ 
+ def roulade_height_after_roll(
+@@ -7040,6 +7127,7 @@ def roulade_height_after_roll(
+     gate_lo: float = math.radians(260.0),
+     gate_hi: float = math.radians(330.0),
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++    wall_name: str | None = None,
+ ) -> torch.Tensor:
+     """Broad height Gaussian × completion gate — pull up to standing height."""
+     asset: Entity = env.scene[asset_cfg.name]
+@@ -7048,7 +7136,10 @@ def roulade_height_after_roll(
+         asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+     )
+     g = torch.exp(-((z - target_height) / std) ** 2)
+-    return g * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
++    r = g * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
++    if wall_name is not None:
++        r = r * _past_wall_mask(env, asset, wall_name)
++    return r
+ 
+ 
+ def roulade_landing_sharp(
+@@ -7059,6 +7150,7 @@ def roulade_landing_sharp(
+     gate_lo: float = math.radians(260.0),
+     gate_hi: float = math.radians(330.0),
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++    wall_name: str | None = None,
+ ) -> torch.Tensor:
+     """Tight-std upright × height Gaussians × completion gate — the last mile.
+ 
+@@ -7078,7 +7170,10 @@ def roulade_landing_sharp(
+     )
+     height_g = torch.exp(-((z - target_height) / height_std) ** 2)
+     gate = _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+-    return upright_g * height_g * gate
++    r = upright_g * height_g * gate
++    if wall_name is not None:
++        r = r * _past_wall_mask(env, asset, wall_name)
++    return r
+ 
+ 
+ def roulade_stand_tax(
+@@ -7086,18 +7181,28 @@ def roulade_stand_tax(
+     target_height: float,
+     gate_lo: float = math.radians(260.0),
+     gate_hi: float = math.radians(330.0),
++    ramp_steps: float = 75.0,
+     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+ ) -> torch.Tensor:
+     """SELF-NEGATING height L1 below target, active only after roll completion.
+ 
+-    Returns −max(0, target − z) × completion_gate — use a POSITIVE weight
+-    (penalty sign convention). The run-3 fix for post-roll crumple-camping:
++    Returns −max(0, target − z) × completion_gate × rise-ramp — use a POSITIVE
++    weight (penalty sign convention). The run-3 fix for post-roll crumple-camping:
+     the gated landing rewards made standing better than lying in a heap, but
+     the heap itself was FREE — with only positive gated terms, "stay crumpled"
+     collects ≈0/step, a comfortable basin (the standup static-sit lesson:
+     the basin must be net NEGATIVE to force the rise). The gate keeps the
+     roll itself untaxed, and requires the head latch so a no-roll episode
+     can't be punished into weird avoidance behaviors.
++
++    Run-6 rise ramp: the shortfall is multiplied by a 0→1 ramp over
++    ``ramp_steps`` after the env's frontier first crossed _RISE_OPEN_REF
++    (late midroll spawns start the clock at birth). A slow crunch-up only
++    pays the shallow early ramp, while PARKING in the fold makes the basin
++    progressively more negative — the deterministic-policy frozen-fold
++    attractor seen in run-5 play rollouts becomes strictly unprofitable,
++    without taxing the launch itself (the ramp prices TIME below target,
++    not the violence of leaving it).
+     """
+     asset: Entity = env.scene[asset_cfg.name]
+     _update_roulade_accum(env, asset)
+@@ -7105,7 +7210,13 @@ def roulade_stand_tax(
+         asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+     )
+     shortfall = torch.clamp(target_height - z, min=0.0)
+-    return -shortfall * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
++    gate = _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
++    open_dt = torch.clamp(
++        (float(env.common_step_counter) - env._roulade_open_step) / max(ramp_steps, 1.0),
++        0.0,
++        1.0,
++    )
++    return -shortfall * gate * open_dt
+ 
+ 
+ def roulade_rise_velocity(
+@@ -7133,6 +7244,182 @@ def roulade_rise_velocity(
+     return reward * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+ 
+ 
++def roulade_airborne(
++    env: ManagerBasedRlEnv,
++    max_height: float = 0.115,
++    gate_lo: float = math.radians(260.0),
++    gate_hi: float = math.radians(360.0),
++    sensor_name: str = "feet_ground_contact",
++    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++) -> torch.Tensor:
++    """Quality-weighted 腾空 (flight) credit for the kip-up launch.
++
++    The '打挺' snap leaves the feet; run-5's rise was a slow crunch (measured
++    rise vz ~0.35 m/s) partly because nothing paid for flight, and a bare
++    airborne indicator (run-6a) gave no gradient toward a HIGHER, more
++    explosive launch. This term pays  clamp(vz, 0, +) × clamp(z, 0, max_height)
++    per airborne step — upward velocity AND apex height both count — but ONLY
++    in the post-roll window (frontier ≥ gate_lo, head-latched, same completion
++    gate as the landing family) and only below ``max_height`` (≈ standing
++    height), so hopping once upright earns nothing and it cannot be farmed.
++    The roll itself stays support-gated — airborne rotation before the gate
++    still earns nothing (run-1 ballistic-whip lesson); this credits the
++    LAUNCH, not a bounce-based roll.
++    """
++    asset: Entity = env.scene[asset_cfg.name]
++    _update_roulade_accum(env, asset)
++    if sensor_name not in env.scene.sensors:
++        return torch.zeros(env.num_envs, device=env.device)
++    found = env.scene.sensors[sensor_name].data.found
++    feet_contact = (found.view(found.shape[0], -1) > 0).any(dim=-1)
++    airborne = ~feet_contact
++    z = torch.nan_to_num(
++        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
++    )
++    vz = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 2], nan=0.0)
++    gate = _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
++    quality = torch.clamp(vz, min=0.0) * torch.clamp(z, min=0.0, max=max_height)
++    return airborne.float() * quality * gate * (z < max_height).float()
++
++
++def roulade_dive_launch(
++    env: ManagerBasedRlEnv,
++    vx_lo: float = 0.1,
++    vx_hi: float = 0.4,
++    omega_ref: float = 2.0,
++    max_height: float = 0.13,
++    frontier_max: float = math.radians(90.0),
++    sensor_name: str = "feet_ground_contact",
++    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++) -> torch.Tensor:
++    """Dive-entry credit for the dive-roll: pay the AIRBORNE launch phase at the
++    START of the maneuver (before the supported roll begins).
++
++    reward = airborne × clamp01(vx in [vx_lo, vx_hi]) × clamp(ω_fwd/omega_ref, 0, 1)
++    × (z < max_height), gated to frontier < frontier_max (the first ~90°).
++
++    Design constraints (AGENTS.md lessons):
++    - The roll itself stays support-gated in the accumulator (run-1 ballistic
++      lesson) — this term pays ONLY the launch, never airborne rotation past
++      frontier_max, so a whip earns nothing here.
++    - vx gate: a static hop earns nothing; the dive must carry forward speed
++      (from the élan spawn velocity or a self-generated lunge).
++    - omega gate: pays more when the launch already carries forward pitch rate
++      (tucked dive entry), zero for a pure vertical pop.
++    - z cap: hopping upright earns nothing (z crosses max_height on a real hop).
++    - Rate-limited by construction: airborne steps before 90° are few, so this
++      is a bounded entry bonus, not a jackpot.
++    """
++    asset: Entity = env.scene[asset_cfg.name]
++    _update_roulade_accum(env, asset)
++    _, frontier, _ = _roulade_state(env)
++    if sensor_name not in env.scene.sensors:
++        return torch.zeros(env.num_envs, device=env.device)
++    found = env.scene.sensors[sensor_name].data.found
++    feet_contact = (found.view(found.shape[0], -1) > 0).any(dim=-1)
++    airborne = ~feet_contact
++    vx = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 0], nan=0.0)
++    vx_gain = torch.clamp((vx - vx_lo) / (vx_hi - vx_lo), 0.0, 1.0)
++    omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
++    omega_gain = torch.clamp(torch.nan_to_num(omega_fwd, nan=0.0) / omega_ref, 0.0, 1.0)
++    z = torch.nan_to_num(
++        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
++    )
++    early = (frontier < frontier_max).float()
++    return airborne.float() * vx_gain * omega_gain * (z < max_height).float() * early
++
++
++def roulade_dive_launch_v2(
++    env: ManagerBasedRlEnv,
++    vx_lo: float = 0.4,
++    vx_hi: float = 1.25,
++    stand_z: float = 0.115,
++    height_ref: float = 0.05,
++    frontier_max: float = math.radians(90.0),
++    sensor_name: str = "feet_ground_contact",
++    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++) -> torch.Tensor:
++    """Run-4 dive-entry credit: pay EXPLICIT flight — airborne HEIGHT GAIN above
++    standing height + airborne DURATION — in the pre-roll window (<90°).
++
++    reward = airborne × clamp01(vx in [vx_lo, vx_hi])
++             × (0.4 + 0.6 × clamp01((z − stand_z)/height_ref))
++    gated to frontier < frontier_max.
++
++    Differences vs roulade_dive_launch (run-3, which capped z BELOW standing
++    height and multiplied by an omega gate — paying "not too high, tumbling
++    a bit", never real flight):
++    - Height is now PAID, not capped: the base must rise above stand_z for the
++      full credit; a grounded lunge still gets the 0.4 base component per
++      airborne step, a true leap gets 1.0.
++    - Airborne duration pays implicitly: every airborne step before 90° earns
++      the term, so longer flight = more credit (bounded by the frontier gate,
++      which closes once the roll proper starts).
++    - omega factor dropped: the vx gate (widened to 0.4–1.25 m/s to cover the
++      1.2 m/s trigger regime in-distribution) already enforces forward intent;
++      omega × height was a 4-factor product that mostly sat at ~0 (run-1
++      sparse-jackpot lesson).
++    Bounded: per-step max 1.0, and airborne steps before 90° are few, so with
++    weight 6.0 the term stays well under the ~10-magnitude task rewards.
++    NaN-safe: all inputs pass through nan_to_num; missing sensor → zeros.
++    """
++    asset: Entity = env.scene[asset_cfg.name]
++    _update_roulade_accum(env, asset)
++    _, frontier, _ = _roulade_state(env)
++    if sensor_name not in env.scene.sensors:
++        return torch.zeros(env.num_envs, device=env.device)
++    found = env.scene.sensors[sensor_name].data.found
++    feet_contact = (found.view(found.shape[0], -1) > 0).any(dim=-1)
++    airborne = (~feet_contact).float()
++    vx = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 0], nan=0.0)
++    vx_gain = torch.clamp((vx - vx_lo) / (vx_hi - vx_lo), 0.0, 1.0)
++    z = torch.nan_to_num(
++        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
++    )
++    height_gain = torch.clamp((z - stand_z) / height_ref, 0.0, 1.0)
++    early = (frontier < frontier_max).float()
++    return airborne * vx_gain * (0.4 + 0.6 * height_gain) * early
++
++
++def roulade_dive_approach(
++    env: ManagerBasedRlEnv,
++    vx_lo: float = 0.1,
++    vx_hi: float = 0.5,
++    omega_ref: float = 3.0,
++    vz_ref: float = 0.3,
++    frontier_max: float = math.radians(90.0),
++    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
++) -> torch.Tensor:
++    """Dense dive-entry shaping (run-2): pay forward speed + forward pitch rate
++    + upward vz CONTINUOUSLY during the pre-roll window (frontier < 90°),
++    regardless of contact.
++
++    Run-1 lesson: roulade_dive_launch is a 4-factor product gated on airborne —
++    the warm-start policy essentially never enters that state, so the term sat
++    at ~0.0005 for 6000 iterations (undiscoverable sparse jackpot, same failure
++    mode as roulade_airborne in run-6). This companion term keeps the gradient
++    dense: every step of the approach pays for more élan, more forward pitch
++    rate, and more upward CoM velocity. The airborne product term stays as the
++    bonus; this term is the ramp toward it.
++
++    Bounded by construction: the window closes at frontier_max (the roll
++    proper stays governed by the support-gated accumulator), and each factor
++    is clamp01, so the max per-step value is 1.
++    """
++    asset: Entity = env.scene[asset_cfg.name]
++    _update_roulade_accum(env, asset)
++    _, frontier, _ = _roulade_state(env)
++    early = (frontier < frontier_max).float()
++    vx = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 0], nan=0.0)
++    vx_gain = torch.clamp((vx - vx_lo) / (vx_hi - vx_lo), 0.0, 1.0)
++    omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
++    omega_gain = torch.clamp(torch.nan_to_num(omega_fwd, nan=0.0) / omega_ref, 0.0, 1.0)
++    vz_gain = torch.clamp(
++        torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 2], nan=0.0) / vz_ref, 0.0, 1.0
++    )
++    return early * (0.5 * vx_gain + 0.3 * omega_gain + 0.2 * vz_gain)
++
++
+ def roulade_overspeed_penalty(
+     env: ManagerBasedRlEnv,
+     omega_max: float = 4.0,
+@@ -7186,3 +7473,772 @@ def roulade_lateral_velocity_penalty(
+     """Body-frame lateral (y) linear velocity² — keeps the roll straight."""
+     asset: Entity = env.scene[asset_cfg.name]
+     return torch.nan_to_num(asset.data.root_link_lin_vel_b[:, 1].pow(2), nan=0.0)
++
++
++def track_linear_velocity_highspeed(
++    env: ManagerBasedRlEnv,
++    std: float,
++    command_name: str,
++    gate: float = 0.5,
++    asset_cfg: SceneEntityCfg = None,
++) -> torch.Tensor:
++    """Extra tracking reward paid ONLY when |commanded vx| >= gate.
++
++    Mirrors mjlab's track_linear_velocity (xy error + z penalty, exp kernel)
++    but gated on high-speed commands, so the policy cannot earn the bonus by
++    standing still. NaN-safe. Used by the velocity_fast run2 experiment.
++    """
++    if asset_cfg is None:
++        from mjlab.tasks.velocity.mdp.rewards import _DEFAULT_ASSET_CFG as asset_cfg
++    asset: Entity = env.scene[asset_cfg.name]
++    command = env.command_manager.get_command(command_name)
++    assert command is not None, f"Command '{command_name}' not found."
++    command = torch.nan_to_num(command, nan=0.0)
++    actual = torch.nan_to_num(asset.data.root_link_lin_vel_b, nan=0.0)
++    xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
++    z_error = torch.square(actual[:, 2])
++    reward = torch.exp(-(xy_error + z_error) / std**2)
++    gate_mask = (command[:, 0].abs() >= gate).float()
++    return reward * gate_mask
++
++
++def lin_vel_x_range_curriculum(
++    env: ManagerBasedRlEnv,
++    env_ids: torch.Tensor,
++    command_name: str,
++    range_stages: list[dict],
++) -> torch.Tensor:
++    """Step-staged widening of the twist command's lin_vel_x range.
++
++    Mutates the live command term cfg (same pattern as
++    standing_envs_curriculum). ``range_stages``: [{"step": int,
++    "lin_vel_x": (lo, hi)}, ...].
++    """
++    del env_ids
++    command_term = env.command_manager.get_term(command_name)
++    assert command_term is not None, f"Command term '{command_name}' not found"
++    cfg = command_term.cfg
++    for stage in range_stages:
++        if env.common_step_counter > stage["step"]:
++            cfg.ranges.lin_vel_x = tuple(stage["lin_vel_x"])
++    return torch.tensor([cfg.ranges.lin_vel_x[1]])
++
++
++# ── Dive-wall (obstacle-forced dive) ─────────────────────────────────────────
++
++def reset_wall_ahead(
++    env: ManagerBasedRlEnv,
++    env_ids: torch.Tensor,
++    distance_range: tuple = (0.22, 0.30),
++    lateral_noise: float = 0.02,
++    wall_sink: float = 0.0,
++    asset_name: str = "wall",
++):
++    """Place the hurdle dead ahead of the robot's spawn yaw (wall variant).
++
++    Same pattern as reset_ball_in_front_of_foot: read the finalized robot root
++    from qpos, offset forward along its yaw by ``distance_range`` (uniform),
++    align the wall's long axis perpendicular to the heading, zero velocity.
++    Must run AFTER set_roulade_state (dict insertion order).
++    """
++    if env_ids is None or len(env_ids) == 0:
++        return
++    env_ids = env_ids.to(env.device)
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++
++    root = env.sim.data.qpos[env_ids][:, robot.indexing.free_joint_q_adr]
++    qw, qx, qy, qz = root[:, 3], root[:, 4], root[:, 5], root[:, 6]
++    yaw = torch.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
++    cos_y, sin_y = torch.cos(yaw), torch.sin(yaw)
++
++    n = len(env_ids)
++    dist = (
++        torch.rand(n, device=env.device) * (distance_range[1] - distance_range[0])
++        + distance_range[0]
++    )
++    lat = (torch.rand(n, device=env.device) * 2.0 - 1.0) * lateral_noise
++
++    pose = torch.zeros(n, 7, device=env.device)
++    pose[:, 0] = root[:, 0] + cos_y * dist - sin_y * lat
++    pose[:, 1] = root[:, 1] + sin_y * dist + cos_y * lat
++    pose[:, 2] = env.scene.terrain.env_origins[env_ids, 2] + 0.06 - wall_sink
++    # ^ Bug fix (run-8c): was 0.03, placing the 6cm-half-height wall at
++    # z∈[-0.03,0.09] — a 9cm wall instead of the intended 12cm (wall.xml
++    # places the body at z=0.06). 9cm was steppable: the policy climbed the
++    # wall like a stair without displacing it (probe 2026-10-02).
++    # wall_sink (stage-2e curriculum 2026-10-05): sink the wall into the
++    # ground — effective height = 12cm - wall_sink. Duck never took off at
++    # 12cm in 16k iters (push/takeoff mutual exclusion); lower it until the
++    # flight jackpot is reachable by accident, then raise it back.
++    # Yaw-only quaternion (w, 0, 0, z)
++    pose[:, 3] = torch.cos(yaw * 0.5)
++    pose[:, 6] = torch.sin(yaw * 0.5)
++    wall.write_root_link_pose_to_sim(pose, env_ids)
++    wall.write_root_link_velocity_to_sim(
++        torch.zeros(n, 6, device=env.device), env_ids
++    )
++    # Per-episode flight-clear latch (see wall_flight_clear_bonus).
++    if hasattr(env, "_wall_flight_paid"):
++        env._wall_flight_paid[env_ids] = False
++    # Run-8b: remember the planted pose — shove detection / planted gating.
++    if not hasattr(env, "_wall_spawn_pose"):
++        env._wall_spawn_pose = torch.zeros(
++            env.num_envs, 7, device=env.device
++        )
++    env._wall_spawn_pose[env_ids] = pose
++
++
++def _wall_displaced(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    xy_thresh: float = 0.015,
++    tilt_thresh_deg: float = 15.0,
++) -> torch.Tensor:
++    """Run-8b helper: True where the wall has been MOVED or TILTED from its
++    planted pose (stored by reset_wall_ahead). Missing spawn bookkeeping ->
++    all False (gates open, run<=8 behavior)."""
++    if not hasattr(env, "_wall_spawn_pose"):
++        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    wall: Entity = env.scene[asset_name]
++    wpos = wall.data.root_link_pose_w
++    moved = (torch.nan_to_num(wpos[:, :2] - env._wall_spawn_pose[:, :2]))
++    xy = moved.norm(dim=1) > xy_thresh
++    # Tilt via the wall's UP vector (yaw-invariant). Bug fix (run-8b): the
++    # first version used qw*qw0 < cos(half-angle), but qw = cos(yaw/2) for
++    # the yaw-only spawn quat — spawns facing ~180° have qw≈0 and were
++    # flagged "tilted" from step 0, permanently opening the shove penalty
++    # and closing the flight gate for those envs.
++    q = wpos[:, 3:7]
++    up = 1.0 - 2.0 * (q[:, 1] ** 2 + q[:, 2] ** 2)
++    tilted = up < math.cos(math.radians(tilt_thresh_deg))
++    return xy | tilted
++
++
++def wall_lateral_termination(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    max_lat: float = 1.2,
++) -> torch.Tensor:
++    """Run-9: terminate when the robot strays too far laterally from the
++    wall centerline (robot-frame left offset, same lat as wall_critic_obs).
++
++    Probe 2026-10-02 (run-8c): 7/16 envs simply walked AROUND the 1.6 m
++    wall on the infinite plane (crossed the wall plane at z≈0.05 with the
++    wall untouched). The wall is widened to 3 m and this termination makes
++    rounding it cost the rest of the episode — the only remaining path to
++    the far side is over it.
++    """
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++    rpos = robot.data.root_link_pose_w
++    wpos = wall.data.root_link_pose_w
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    left = torch.stack((-fwd[:, 1], fwd[:, 0]), dim=1)
++    lat = ((rpos[:, :2] - wpos[:, :2]) * left).sum(dim=1)
++    return lat.abs() > max_lat
++
++
++def wall_runup_shaping(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    zone_near: float = 0.30,
++    vx_lo: float = 0.4,
++    vx_full: float = 0.9,
++    lean_full_deg: float = 30.0,
++    lean_max_deg: float = 35.0,
++    lean_peak_deg: float = 0.0,
++    lean_zero_deg: float = 30.0,
++    feet_sensor: str = "feet_ground_contact",
++) -> torch.Tensor:
++    """Run-10: LEANING RUN-UP credit between spawn and the dive zone.
++
++    reward = in_runway(dist > zone_near) × feet_ON_ground
++             × clamp01((vx − vx_lo)/(vx_full − vx_lo))
++             × (0.4 + 0.6 × ramp01(|pitch| 0→lean_full_deg))
++
++    Decomposition goal (user 2026-10-02): 跑 → 前倾着跑 → 跳(前扑) → … —
++    runs 1-9 spawned 2 body-lengths from the wall, so the policy flopped
++    straight into the roll. Run-10 spawns 0.85-1.2 m out; this term pays
++    each grounded step that HOLDS forward speed with a slight forward lean
++    (upright-but-leaning, NOT pitched into the dive — the dive pitch belongs
++    to the takeoff zone). Bounded ≤1/step, NaN-safe.
++    """
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++    rpos = robot.data.root_link_pose_w
++    vel = torch.nan_to_num(robot.data.root_link_vel_w)
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
++    # dist is SIGNED along the heading: negative while approaching the wall.
++    # The runway is everything more than zone_near BEFORE the wall plane
++    # (bug fix 2026-10-02: first version used dist > zone_near — the wrong
++    # side, paid zero at spawn for 1000 iters).
++    in_runway = dist < -zone_near
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    feet_on = (
++        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++
++    vx = (vel[:, :2] * fwd).sum(dim=1)
++    vx_ramp = torch.clamp((vx - vx_lo) / max(vx_full - vx_lo, 1e-6), 0.0, 1.0)
++    quat = robot.data.root_link_quat_w
++    qw2, qx, qy, qz2 = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++    pitch = torch.asin(
++        torch.clamp(2.0 * (qw2 * qy - qz2 * qx), -1.0, 1.0)
++    ).abs()
++    lean_ramp = torch.clamp(pitch / math.radians(lean_full_deg), 0.0, 1.0)
++    # Run-15 stage-1 lesson: lean_ramp SATURATES at lean_full and never decays
++    # — the duck farmed the term by FLOPPING forward onto its head at 40°+
++    # (user GIF 2026-10-04: 没有跑起来直接扑倒). Hard ceiling: past
++    # lean_max_deg the runway credit cuts to zero (that posture is the DIVE,
++    # and the premature-roll penalty owns it), and lean is only a 30% bonus
++    # now — the vx ramp is the business.
++    lean_ok = (pitch < math.radians(lean_max_deg)).float()
++    if lean_peak_deg > 0.0:
++        # Run school v3 (2026-10-06 GIF verdict: 趴着跑步): the old
++        # 0→30° ramp paid MAXIMUM lean credit at exactly the prone-running
++        # pitch — the duck obeyed the formula. v4 (user 2026-10-07 稍微倾斜
++        # 的跑步有利于加速): PLATEAU bonus — full credit for upright through
++        # a natural sprint lean (0..lean_peak_deg), then decays linearly to
++        # zero at lean_zero_deg. Slight lean is allowed-and-equal, prone
++        # running pays like standing still.
++        p_pk, p_z = math.radians(lean_peak_deg), math.radians(lean_zero_deg)
++        lean_bonus = torch.clamp(
++            1.0 - torch.clamp(pitch - p_pk, min=0.0) / max(p_z - p_pk, 1e-6),
++            0.0, 1.0,
++        )
++        return (
++            in_runway.float() * feet_on.float() * vx_ramp
++            * lean_ok * (0.5 + 0.5 * lean_bonus)
++        )
++    return (
++        in_runway.float() * feet_on.float() * vx_ramp
++        * lean_ok * (0.7 + 0.3 * lean_ramp)
++    )
++
++
++def wall_shove_penalty(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    xy_thresh: float = 0.015,
++    tilt_thresh_deg: float = 15.0,
++) -> torch.Tensor:
++    """Run-8b: FLAT per-step penalty while the wall is displaced/tilted.
++
++    Run-8 probe finding: 8/12 envs "crossed" at z=0.046-0.065 — the duck
++    SHOVES the 2 kg free-joint wall out of the way and walks through the
++    vacated plane (one env even knocked it flat, wall_up 0.0). The collision
++    penalty prices contact but not the resulting displacement, so shoving
++    remained the cheapest "crossing". This term prices the shove itself:
++    every step the wall is out of its planted pose costs 1.0 (bumped
++    through). Pair with planted-gating on the cleared/flight bonuses.
++    """
++    return _wall_displaced(env, asset_name, xy_thresh, tilt_thresh_deg).float()
++
++
++def prone_fall_penalty(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "robot",
++    pitch_thresh_deg: float = 40.0,
++) -> torch.Tensor:
++    """Stage-1-run v2 (user 2026-10-07): prone/fallen posture tax, wall-free.
++
++    User spec: 修复跌倒代价…趴地需要惩罚——理论上同跌倒代价. A trunk pitch
++    beyond pitch_thresh_deg is "fallen over" whether it got there by diving,
++    flopping, or tipping — all the same failure of upright running. 1.0/step
++    while it lasts, no wall reference (run school parks the wall away).
++    """
++    robot: Entity = env.scene[asset_name]
++    quat = robot.data.root_link_quat_w
++    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
++    return (pitch > math.radians(pitch_thresh_deg)).float()
++
++
++def wall_premature_roll_penalty(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "robot",
++    wall_name: str = "wall",
++    near_dist: float = 0.15,
++    pitch_thresh_deg: float = 35.0,
++    feet_sensor: str = "feet_ground_contact",
++) -> torch.Tensor:
++    """Run-14b: penalize GROUNDED rolling far in front of the wall.
++
++    User spec 2026-10-04: 在墙前远处翻滚不能给 reward，甚至负向；在墙前
++    附近前扑，墙后头落地翻滚. With all roll-payoff terms past-wall-gated, a
++    pre-wall roll now earns ~0 — but ~0 is not enough of a signal when the
++    base dive_launch/airborne terms still pay ANY airborne rotation. This
++    term makes a SUPPORTED pitch-beyond-threshold body pose on the APPROACH
++    side (dist < -near_dist) actively costly, carving out a dead zone where
++    only the run-up and the near-wall pounce pay. 1.0/step while it lasts.
++    """
++    robot: Entity = env.scene[asset_name]
++    try:
++        wall: Entity = env.scene[wall_name]
++    except KeyError:
++        return torch.zeros(env.num_envs, device=env.device)
++    rpos = robot.data.root_link_pose_w
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
++    far_before = dist < -near_dist
++
++    quat = robot.data.root_link_quat_w
++    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
++    pitched = pitch > math.radians(pitch_thresh_deg)
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    feet_on = (
++        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++    return (far_before & pitched & feet_on).float()
++
++
++def wall_premature_dive_penalty(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "robot",
++    wall_name: str = "wall",
++    near_dist: float = 0.30,
++    pitch_hi_deg: float = 32.0,
++    pitch_air_deg: float = 15.0,
++    feet_sensor: str = "feet_ground_contact",
++) -> torch.Tensor:
++    """Stage-2b (user 2026-10-05): penalize diving at the wall TOO EARLY.
++
++    User spec: 扑的还是太早了，没到墙就扑. wall_premature_roll_penalty only
++    fires GROUNDED (feet_on), so an early AIRBORNE pounce — or a deep pitch
++    lunge that never leaves the ground — sails through unpenalized, then
++    slides into the 25cm push zone and still cashes in. This term closes
++    that hole: on the approach side beyond near_dist, a deep pitch lunge
++    (grounded, pitch > pitch_hi_deg — set just past the runup lean_max 35°)
++    OR an airborne body with meaningful forward pitch (pitch >
++    pitch_air_deg, sprint flight phases are upright so they stay free)
++    costs 1.0/step. Only the near-wall pounce pays.
++    """
++    robot: Entity = env.scene[asset_name]
++    try:
++        wall: Entity = env.scene[wall_name]
++    except KeyError:
++        return torch.zeros(env.num_envs, device=env.device)
++    rpos = robot.data.root_link_pose_w
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
++    far_before = dist < -near_dist
++
++    quat = robot.data.root_link_quat_w
++    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    feet_on = (
++        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++    airborne = ~feet_on
++    deep_lunge = (~airborne) & (pitch > math.radians(pitch_hi_deg))
++    air_pounce = airborne & (pitch > math.radians(pitch_air_deg))
++    return (far_before & (deep_lunge | air_pounce)).float()
++
++
++def wall_collision_penalty(
++    env: ManagerBasedRlEnv,
++    sensor_name: str = "robot_wall_contact",
++    force_scale: float = 50.0,
++) -> torch.Tensor:
++    """Normalized robot-wall contact force — the 'don't bulldoze it' signal.
++
++    Net contact force magnitude clipped to force_scale then normalized to
++    [0, 1]; use with a NEGATIVE weight. Light grazing is cheap, ramming the
++    hurdle head-on is expensive every step it lasts.
++    """
++    sensor = env.scene.sensors[sensor_name]
++    force = sensor.data.force
++    if force is None or force.numel() == 0:
++        return torch.zeros(env.num_envs, device=env.device)
++    mag = force.flatten(start_dim=1).norm(dim=1)
++    return (mag.clamp(max=force_scale) / force_scale)
++
++
++def wall_cleared_bonus(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    robot_fwd_offset: float = 0.05,
++    min_height: float = 0.06,
++) -> torch.Tensor:
++    """Pay when the robot's trunk has passed the wall plane while above it.
++
++    One-step binary (weight sets the per-step payout): robot x-y is beyond
++    the wall center along the spawn heading AND root z is at least the wall
++    top (0.06 m). Rewards actually launching OVER the hurdle rather than
++    bulldozing through — pairs with the collision penalty.
++    """
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++    rpos = robot.data.root_link_pose_w[:, :2]
++    wpos = wall.data.root_link_pose_w[:, :2]
++    heading = robot.data.root_link_pose_w[:, 3:7]
++    qw, qz = heading[:, 0], heading[:, 3]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack(
++        (torch.cos(yaw), torch.sin(yaw)), dim=1
++    )
++    passed = ((rpos - wpos) * fwd).sum(dim=1) > robot_fwd_offset
++    high = robot.data.root_link_pose_w[:, 2] >= min_height
++    planted = ~_wall_displaced(env, asset_name)  # run-8b: shove gating
++    return (passed & high & planted).float()
++
++
++def wall_contact_penalty(
++    env: ManagerBasedRlEnv,
++    sensor_name: str = "robot_wall_contact",
++) -> torch.Tensor:
++    """Run-3: FLAT per-step penalty for ANY robot-wall contact.
++
++    Run-2's force-normalized penalty made resting-on / vaulting-over the wall
++    nearly free ("light grazing is cheap") — the policy learned to roll onto
++    the wall and over instead of leaping. A flat 1-per-contact-step signal
++    prices ALL wall support equally, so the only free path is over it in
++    flight.
++    """
++    if sensor_name not in env.scene.sensors:
++        return torch.zeros(env.num_envs, device=env.device)
++    found = env.scene.sensors[sensor_name].data.found
++    if found is None or found.numel() == 0:
++        return torch.zeros(env.num_envs, device=env.device)
++    return (found.view(found.shape[0], -1) > 0).any(dim=-1).float()
++
++
++def wall_flight_clear_bonus(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    robot_fwd_offset: float = 0.05,
++    min_height: float = 0.10,
++    clearance: float = 0.02,
++    feet_sensor: str = "feet_ground_contact",
++    wall_sensor: str = "robot_wall_contact",
++    payout: float = 1.0,
++) -> torch.Tensor:
++    """Run-3: ONE-SHOT bonus for clearing the wall plane IN FLIGHT.
++
++    Triggers once per episode when, at the moment the trunk crosses the wall
++    plane: (a) no foot is on the ground, (b) no robot-wall contact (not
++    vaulting/resting on it), (c) root z is at least min_height + clearance.
++    Paid once via a per-env latch (reset by reset_wall_ahead); pair with a
++    large weight (e.g. 10) so it dominates the drip of wall_cleared_bonus.
++
++    Run-2 lesson: the per-step cleared bonus only rewarded "being past the
++    wall" (standing z 0.115 > 0.06 always true) — the crossing itself was
++    never paid, so the cheapest crossing (roll onto the wall) won.
++    """
++    if not hasattr(env, "_wall_flight_paid"):
++        env._wall_flight_paid = torch.zeros(
++            env.num_envs, dtype=torch.bool, device=env.device
++        )
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++    rpos = robot.data.root_link_pose_w
++    wpos = wall.data.root_link_pose_w
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    passed = ((rpos[:, :2] - wpos[:, :2]) * fwd).sum(dim=1) > robot_fwd_offset
++    z_ok = torch.nan_to_num(rpos[:, 2]) >= (min_height + clearance)
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    feet_air = (
++        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++    wall_found = env.scene.sensors[wall_sensor].data.found if wall_sensor in env.scene.sensors else None
++    wall_free = (
++        ~((wall_found.view(wall_found.shape[0], -1) > 0).any(dim=-1))
++        if wall_found is not None and wall_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++
++    newly = passed & z_ok & feet_air & wall_free & ~env._wall_flight_paid
++    # Run-8b: the jackpot only counts if the wall is still planted where it
++    # was reset — otherwise "crossing" is just walking through where the
++    # shoved wall used to be (probe 2026-10-02: 8/12 envs did exactly this).
++    newly = newly & ~_wall_displaced(env, asset_name)
++    env._wall_flight_paid = env._wall_flight_paid | newly
++    return newly.float() * payout
++
++
++def wall_critic_obs(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    dist_scale: float = 1.0,
++    lat_scale: float = 0.5,
++) -> torch.Tensor:
++    """CRITIC-ONLY wall-relative observation (run-4 teacher-student fix).
++
++    [signed distance to the wall plane along the robot heading (m) / dist_scale,
++     lateral offset from the wall centerline (m) / lat_scale,
++     passed-the-plane flag]
++
++    The actor stays blind (61-D proprioceptive, wall is training scaffolding);
++    the critic needs this to correctly attribute the wall collision penalty /
++    flight jackpot to the states where they actually fire — otherwise they are
++    sourceless noise and value learning just suppresses the forward region
++    (user diagnosis 2026-10-01).
++    """
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++    rpos = robot.data.root_link_pose_w
++    wpos = wall.data.root_link_pose_w
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    left = torch.stack((-fwd[:, 1], fwd[:, 0]), dim=1)
++    rel = rpos[:, :2] - wpos[:, :2]
++    dist = (rel * fwd).sum(dim=1) / dist_scale
++    lat = (rel * left).sum(dim=1) / lat_scale
++    passed = (dist > 0).float()
++    return torch.stack((dist, lat, passed), dim=1)
++
++
++def wall_takeoff_shaping(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    zone_near: float = 0.02,
++    zone_far: float = 0.20,
++    vz_scale: float = 0.5,
++    vx_scale: float = 1.2,
++    pitch_min_deg: float = 0.0,
++    pitch_full_deg: float = 0.0,
++    feet_sensor: str = "feet_ground_contact",
++    wall_sensor: str = "robot_wall_contact",
++) -> torch.Tensor:
++    """Run-5: DENSE takeoff shaping in front of the wall.
++
++    reward = in_zone × airborne(no feet, no wall contact)
++             × clamp01(vz / vz_scale) × (0.3 + 0.7 × clamp01(vx / vx_scale))
++             × pitch_ramp   (run-8, optional)
++
++    Pays every airborne, rising step inside the approach zone (zone_near..
++    zone_far before the wall plane) — spreading the one-shot flight jackpot
++    (0.2% hit rate, gradient too sparse in run-3/4) into a continuous
++    credit-assignment path: crouch-load, push, rise. Bounded ≤1/step.
++    NaN-safe; missing sensors → zeros.
++
++    Run-8 physics gate: the wall top (0.12 m) is only ~2 cm below the
++    standing COM (~0.146 m), so clearing it in flight is a PITCH problem,
++    not a jump problem — the trunk must already be diving forward
++    (|pitch| ≥ 60°) at takeoff, otherwise the body geometry cannot fit over
++    the 4 cm wall even with vz ≈ 0.5. When pitch_min_deg > 0 the term is
++    multiplied by ramp01(|pitch| from pitch_min_deg to pitch_full_deg);
++    pitch_min_deg = 0 keeps the run-5 behavior unchanged.
++    """
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++    rpos = robot.data.root_link_pose_w
++    vel = torch.nan_to_num(robot.data.root_link_vel_w)
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
++    # dist is signed (negative while approaching). Zone fix 2026-10-02: the
++    # original (dist >= zone_near) & (dist <= zone_far) selected the region
++    # PAST the wall plane — the shaping paid rising steps after crossing
++    # (where the flight jackpot already pays) instead of the takeoff
++    # approach. Correct zone: zone_near..zone_far BEFORE the wall.
++    in_zone = (dist <= -zone_near) & (dist >= -zone_far)
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    feet_air = (
++        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++    wall_found = env.scene.sensors[wall_sensor].data.found if wall_sensor in env.scene.sensors else None
++    wall_free = (
++        ~((wall_found.view(wall_found.shape[0], -1) > 0).any(dim=-1))
++        if wall_found is not None and wall_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++
++    vz = vel[:, 2].clamp(min=0.0)
++    vx = (vel[:, :2] * fwd).sum(dim=1).clamp(min=0.0)
++    base = (
++        in_zone.float()
++        * (feet_air & wall_free).float()
++        * (vz / vz_scale).clamp(max=1.0)
++        * (0.3 + 0.7 * (vx / vx_scale).clamp(max=1.0))
++    )
++    if pitch_min_deg > 0.0:
++        quat = robot.data.root_link_quat_w
++        qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++        pitch = torch.asin(
++            torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
++        ).abs()
++        p_lo, p_hi = math.radians(pitch_min_deg), math.radians(pitch_full_deg)
++        pitch_ramp = torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
++        base = base * pitch_ramp
++    return base
++
++
++def wall_push_shaping(
++    env: ManagerBasedRlEnv,
++    asset_name: str = "wall",
++    zone_near: float = 0.02,
++    zone_far: float = 0.25,
++    vz_scale: float = 0.3,
++    vx_scale: float = 1.0,
++    pitch_min_deg: float = 0.0,
++    pitch_full_deg: float = 0.0,
++    feet_sensor: str = "feet_ground_contact",
++    wall_sensor: str = "robot_wall_contact",
++) -> torch.Tensor:
++    """Run-6: GROUNDED push-off credit in front of the wall.
++
++    reward = in_zone × feet_ON_ground × no_wall_contact × clamp01(vz / vz_scale)
++             × (0.3 + 0.7 × clamp01(vx / vx_scale))      (run-14)
++             × ramp01(|pitch| pitch_min→pitch_full)      (run-14, optional)
++
++    Run-13 lesson: with vz-only credit the duck farmed the term via tiny
++    stationary hops in front of the wall (no run-up, no forward dive — it
++    rolled into the wall from a standstill). Run-14 couples the push payoff
++    to forward speed AND a forward pitch ramp (like wall_takeoff_shaping):
++    pitch_min_deg=0 / vx_scale=0 keep run-13 behavior unchanged.
++    Bounded ≤1/step, NaN-safe.
++    """
++    robot: Entity = env.scene["robot"]
++    wall: Entity = env.scene[asset_name]
++    rpos = robot.data.root_link_pose_w
++    vel = torch.nan_to_num(robot.data.root_link_vel_w)
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
++    # Signed-dist zone fix (see wall_takeoff_shaping): approach side = negative.
++    in_zone = (dist <= -zone_near) & (dist >= -zone_far)
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    feet_on = (
++        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++    wall_found = env.scene.sensors[wall_sensor].data.found if wall_sensor in env.scene.sensors else None
++    wall_free = (
++        ~((wall_found.view(wall_found.shape[0], -1) > 0).any(dim=-1))
++        if wall_found is not None and wall_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++
++    vz = vel[:, 2].clamp(min=0.0)
++    vx = (vel[:, :2] * fwd).sum(dim=1).clamp(min=0.0)
++    base = in_zone.float() * (feet_on & wall_free).float()
++    if vx_scale > 0.0:
++        base = base * (0.3 + 0.7 * (vx / vx_scale).clamp(max=1.0))
++    if pitch_min_deg > 0.0:
++        quat = robot.data.root_link_quat_w
++        qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++        pitch = torch.asin(
++            torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
++        ).abs()
++        p_lo, p_hi = math.radians(pitch_min_deg), math.radians(pitch_full_deg)
++        pitch_ramp = torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
++        base = base * pitch_ramp
++    return base
++
++
++def hop_forward_credit(
++    env: ManagerBasedRlEnv,
++    vz_scale: float = 0.4,
++    vx_scale: float = 1.0,
++    pitch_min_deg: float = 0.0,
++    pitch_full_deg: float = 0.0,
++    vx_gate: float = 0.0,
++    feet_sensor: str = "feet_ground_contact",
++) -> torch.Tensor:
++    """Curriculum v2 stage-21 跳远学校 (user 2026-10-05: 重新课程学习).
++
++    18 runs of wall-side shaping failed to bridge grounded push → airborne
++    flight (per-step mutual exclusion: grounded farming always won). School
++    the JUMP itself in isolation, no wall in play. reward per airborne step
++    = clamp01(vz/vz_scale) × (0.3 + 0.7·clamp01(vx/vx_scale)) × pitch_ramp?
++    Teaches UP-and-FORWARD hops; stage-22 adds the pitch ramp (dive jump),
++    stage-23 re-introduces the wall. Bounded ≤1/step, NaN-safe.
++    """
++    robot: Entity = env.scene["robot"]
++    vel = torch.nan_to_num(robot.data.root_link_vel_w)
++    rpos = robot.data.root_link_pose_w
++    qw, qz = rpos[:, 3], rpos[:, 6]
++    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
++    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
++    vz = vel[:, 2].clamp(min=0.0)
++    vx = (vel[:, :2] * fwd).sum(dim=1).clamp(min=0.0)
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    airborne = (
++        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++
++    # v4 (2026-10-06 evening verdict): the v3 hard gate (vx<gate -> 0) starved
++    # the gradient — hop_forward sat at ~0.0002 for 6k iters, jumps never
++    # sampled. Now a SOFT gate: below vx_gate the factor ramps linearly
++    # (vx/vx_gate), above it stays 1 — stationary hops pay ~nothing, moving
++    # hops keep a live gradient. Bounded ≤1/step, NaN-safe.
++    if vx_gate > 0:
++        soft = torch.clamp(vx / max(vx_gate, 1e-6), max=1.0)
++        fwd_factor = soft * (vx / vx_scale).clamp(max=1.0)
++    else:
++        fwd_factor = (vx / vx_scale).clamp(max=1.0)
++    base = airborne.float() * (vz / vz_scale).clamp(max=1.0) * fwd_factor
++    if pitch_min_deg > 0.0:
++        quat = robot.data.root_link_quat_w
++        qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++        pitch = torch.asin(
++            torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
++        ).abs()
++        p_lo, p_hi = math.radians(pitch_min_deg), math.radians(pitch_full_deg)
++        base = base * torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
++    return base
++
++
++def airborne_flop_penalty(
++    env: ManagerBasedRlEnv,
++    pitch_thresh_deg: float = 50.0,
++    feet_sensor: str = "feet_ground_contact",
++) -> torch.Tensor:
++    """Curriculum v2 stage-21 flop guard (user 2026-10-06: 跑步但是趴下了).
++
++    The stage2e-lineage duck farmed hop_forward_credit with belly-flops
++    (brief vz>0 during the push-off of a forward dive). In jump school a
++    JUMP is upright: any airborne step with pitch beyond threshold costs
++    1.0/step. Stage-22 (dive school) removes this guard — there the pitch
++    IS the lesson.
++    """
++    robot: Entity = env.scene["robot"]
++    quat = robot.data.root_link_quat_w
++    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
++    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
++
++    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
++    airborne = (
++        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
++        if feet_found is not None and feet_found.numel() > 0
++        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
++    )
++    return (airborne & (pitch > math.radians(pitch_thresh_deg))).float()
+diff --git a/src/mjlab_microduck/tasks/microduck_ground_pick_env_cfg.py b/src/mjlab_microduck/tasks/microduck_ground_pick_env_cfg.py
+index 94df8b5..017385a 100644
+--- a/src/mjlab_microduck/tasks/microduck_ground_pick_env_cfg.py
++++ b/src/mjlab_microduck/tasks/microduck_ground_pick_env_cfg.py
+@@ -473,6 +473,12 @@ def make_microduck_ground_pick_env_cfg(play: bool = False, rough: bool = False)
+         time_out=False,
+     )
+ 
++    # ── Numeric robustness (same fix as roller_slope/roller_standup/sitstand) ─
++    # nan_state resets only on the NEXT substep; sanitize obs NaN/Inf → 0 so a
++    # single divergent step can't kill the run via rsl_rl check_nan.
++    for grp in ("actor", "critic"):
++        cfg.observations[grp].nan_policy = "sanitize"
++
+     # ── Events ────────────────────────────────────────────────────────────────
+     # BAM (mjlab_frictionloss branch) writes per-env dof_frictionloss/dof_damping
+     # every step; this no-op event registers those fields for per-world expansion.
+diff --git a/src/mjlab_microduck/tasks/microduck_roulade_env_cfg.py b/src/mjlab_microduck/tasks/microduck_roulade_env_cfg.py
+index 7ce9c51..1aa7bd7 100644
+--- a/src/mjlab_microduck/tasks/microduck_roulade_env_cfg.py
++++ b/src/mjlab_microduck/tasks/microduck_roulade_env_cfg.py
+@@ -1,17 +1,26 @@
+-"""Microduck forward-roll (roulade) task — attempt 3, run 2.
++"""Microduck forward-roll (roulade) task — attempt 3, run 6.
+ 
+ Episodic policy: robot starts standing, rolls forward over the flat top of
+ its head, and lands back on its feet. Triggered at deployment like sit/standup
+ (policy switch = roll starts immediately; no phase clock, no reference motion).
+ 
+-RUN-2 REWORK (run 1 learned a violent ballistic "breakdance" whip — optimal
+-under the run-1 rewards: same 2π, sooner, no cost): rotation now only counts
+-while the robot touches the ground (support-gated accumulator — a roulade
+-never leaves the floor), the landing annuity requires an over-the-head
+-contact latch, paid progress rate is capped at 3 rad/s (faster forfeits the
+-excess), an overspeed penalty taxes |ω| > 4 rad/s, and the impact/smoothness
+-penalties are active from step 0 (discovery in this env is easy; style is
+-the scarce resource, not exploration).
++RUN-6 KIP-UP REWORK (run-5 eval: 100% roll+rise at every spawn class, but the
++rise was a slow crunch — measured rise vz ~0.35 m/s, latency OK — and the
++deterministic play policy had a frozen-fold attractor (play rollouts park in
++the tucked pose for whole episodes) plus unbounded action-norm drift at the
++standing hold, a deployment risk):
++  • 腾空 flight credit: NEW roulade_airborne pays per airborne step (feet off
++    the ground) in the post-roll window below STAND_Z — the kip-up "pop" now
++    earns; hopping once upright does not (above max_height the instant the
++    feet leave). The roll itself stays support-gated (run-1/2 lesson).
++  • rise_velocity gate extended 260°→360° (was 180–260°, which missed the
++    actual rise — run-5 episode sum ≈0.01, a dead term).
++  • stand_tax ramp: the post-roll height L1 now grows 0→1 over 1.5 s after
++    the frontier crosses 260° (_roulade_open_step in mdp.py) — parking in
++    the fold becomes progressively expensive; late midroll spawns start the
++    clock at birth.
++  • landing composite pose now covers the neck joints too (hold-gradient on
++    the head against the action drift).
+ 
+ Design (see the roulade section of mdp.py for the full history):
+   • ONE dense progress signal — paid increments of the max-so-far cumulative
+@@ -37,6 +46,7 @@ angular-velocity, large-impact event; taxing attempts prevents discovery
+ """
+ 
+ import math
++import os as _os
+ from copy import deepcopy
+ 
+ # Symmetry — the roll is sagittal / left-right symmetric; the mirror loss
+@@ -75,6 +85,18 @@ EPISODE_LENGTH_S = 5.0
+ # Empirically-measured standing trunk height (standup lesson: don't guess).
+ STAND_Z = 0.115
+ 
++# ── Run-6 tunable reward constants (algo-pi-agent sets these per round) ──────
++# The roulade-kipup tuning scenario overwrites these module attrs from each
++# round's config.json BEFORE the env factory runs — the factory must read the
++# CONSTANTS (not literals) so per-round weights actually take effect.
++# AIRBORNE_WEIGHT: now quality-weighted (vz × height per airborne step, max
++# ~0.4×0.115≈0.046/step vs 1.0/step for the old boolean), so the weight is
++# raised ~4× to keep the 打挺 incentive at the same relative strength.
++AIRBORNE_WEIGHT       = 1.0    # quality-weighted airborne credit (vz × height)
++RISE_VELOCITY_WEIGHT  = 0.75   # upward-CoM-velocity reward in the late-roll window
++STAND_TAX_WEIGHT      = 5.0    # post-roll height shortfall (self-negating, ramped)
++STAND_TAX_RAMP_STEPS  = 75.0   # steps for the stand-tax ramp 0→1 (~1.5 s)
++
+ # ── Élan (run-up) hook ────────────────────────────────────────────────────────
+ # (0, 0) = roll from a standstill (run 1). Widen to e.g. (0.0, 0.3) to train
+ # rolls entered with forward momentum — standing spawns then get a random
+@@ -264,6 +286,10 @@ def make_microduck_roulade_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+ 
+     # Completion-gated standing annuity — the dominant attractor. Broad stds
+     # (standup composite lesson: partial landing must score visibly, ~0.2+).
++    # Run-6: pose coverage now includes the neck joints — run-5 deterministic
++    # rollouts showed the policy mean drifting unboundedly at the standing
++    # hold (action norm ‖a‖→12 while the pose looked fine), with no pose
++    # gradient on the head to pin it back.
+     cfg.rewards["roulade_landing_composite"] = RewardTermCfg(
+         func=microduck_mdp.roulade_landing_composite,
+         weight=4.0,
+@@ -272,7 +298,7 @@ def make_microduck_roulade_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+             "height_std":       0.04,
+             "upright_std":      0.40,
+             "pose_std":         0.40,
+-            "joint_indices":    _LEG_JOINTS,
++            "joint_indices":    _LEG_JOINTS + _NECK_JOINTS,
+             "gate_lo":          LANDING_GATE_LO,
+             "gate_hi":          LANDING_GATE_HI,
+             "target_overrides": None,
+@@ -320,26 +346,49 @@ def make_microduck_roulade_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+     # broke standup's static-sit basin (its height L1 at ÷4-scaled weight
+     # 7.5). Gate closed during the roll, so the roll itself is never taxed;
+     # mid/late-roll spawns are born with it active, which is the point.
++    # Run-6 ramp: the tax grows 0→1 over 1.5 s after the frontier crosses the
++    # gate — parking in the fold becomes progressively expensive while a
++    # prompt rise barely feels it.
+     cfg.rewards["roulade_stand_tax"] = RewardTermCfg(
+         func=microduck_mdp.roulade_stand_tax,
+-        weight=5.0,
++        weight=STAND_TAX_WEIGHT,
+         params={
+             "target_height": STAND_Z,
+             "gate_lo":       LANDING_GATE_LO,
+             "gate_hi":       LANDING_GATE_HI,
++            "ramp_steps":    STAND_TAX_RAMP_STEPS,
+         },
+     )
+ 
+-    # Exit-rise bootstrap: upward CoM velocity, gated to the late-roll region
+-    # (supine → up is the face-up-recovery problem; end-state rewards have zero
+-    # gradient at zero motion there — standup lesson #2).
++    # Exit-rise bootstrap: upward CoM velocity, gated to open from the late
++    # roll (supine → up is the face-up-recovery problem; end-state rewards
++    # have zero gradient at zero motion there — standup lesson #2).
++    # Run-6: the gate now stays open through the whole rise (was 180–260°,
++    # which missed the actual 260°+ rise — observed episode sum was ~0.01,
++    # i.e. dead term). The z < max_height cap still prevents hop-farming.
+     cfg.rewards["roulade_rise_velocity"] = RewardTermCfg(
+         func=microduck_mdp.roulade_rise_velocity,
+-        weight=0.75,
++        weight=RISE_VELOCITY_WEIGHT,
+         params={
+             "max_height": STAND_Z + 0.01,
+             "gate_lo":    RISE_GATE_LO,
+-            "gate_hi":    RISE_GATE_HI,
++            "gate_hi":    math.radians(360.0),
++        },
++    )
++
++    # 腾空 flight-phase credit (run-6, the kip-up requirement): per airborne
++    # step after the roll (gate ≥ 260°, head-latched) while below STAND_Z.
++    # Pays the dynamic "pop" launch out of the fold; standing hops gain
++    # nothing (they're above max_height the moment the feet leave), and the
++    # roll itself stays support-gated (run-1 ballistic-whip lesson).
++    cfg.rewards["roulade_airborne"] = RewardTermCfg(
++        func=microduck_mdp.roulade_airborne,
++        weight=AIRBORNE_WEIGHT,
++        params={
++            "max_height":  STAND_Z,
++            "gate_lo":     LANDING_GATE_LO,
++            "gate_hi":     math.radians(360.0),
++            "sensor_name": "feet_ground_contact",
+         },
+     )
+ 
+@@ -368,7 +417,7 @@ def make_microduck_roulade_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+     # angular-velocity + impact event); the settle/polish pressure comes from
+     # the LATE-introduced gated terms below (arrival_damping, |a_z|, torque
+     # rate) — the standup timing lesson.
+-    cfg.rewards["action_rate_l2"] = RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1)
++    cfg.rewards["action_rate_l2"] = RewardTermCfg(func=microduck_mdp.action_rate_l2_bounded, weight=-0.01, params={"sq_cap": 25.0})
+     cfg.rewards["joint_torque_rate_l2"] = RewardTermCfg(
+         func=microduck_mdp.joint_torque_rate_l2, weight=0.0
+     )
+@@ -730,6 +779,341 @@ def make_microduck_roulade_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+     return cfg
+ 
+ 
++# ── Dive-roll variant (前扑滚翻) ──────────────────────────────────────────────
++# The physics probe (scripts/jump_probe.py, 2026-09-17) closed the true front
++# flip: scripted max-effort squat→extend jumps never produced a clean hop (apex
++# stayed BELOW standing height — position-controlled XL330s can't pop 800 g
++# ballistically). So the dive-roll is built from FORWARD MOMENTUM, not jump
++# height: the élan spawn hook gives standing spawns 0.1–0.3 m/s of forward
++# speed, and a dedicated launch reward pays the brief airborne dive phase
++# (feet off + forward vx + forward pitch rate, only before the roll frontier
++# passes 90°). The roll itself stays support-gated (run-1 ballistic-whip
++# lesson); landing/rise machinery is inherited unchanged.
++# Run-2: élan raised from (0.1, 0.3) — a visible dive needs more incoming
++# momentum (0.3 m/s ≈ 1.2 body-lengths/s barely reads as a lunge), and the
++# reward vx gates are widened to match.
++DIVE_FORWARD_VEL_RANGE = (0.5, 1.2) # élan: initial forward base velocity (m/s) — run-4: covers the 1.2 m/s trigger regime in-distribution
++DIVE_LAUNCH_WEIGHT     = 6.0          # explicit flight credit (height gain + airborne steps <90°) — run-4
++DIVE_APPROACH_WEIGHT   = 1.0          # dense shaping ramp toward the launch (run-2)
++
++
++def make_microduck_roulade_dive_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
++    """Roulade with a dive entry: forward-momentum spawns + launch-phase reward."""
++    cfg = make_microduck_roulade_env_cfg(play=play)
++
++    # Élan: standing spawns start with forward speed (approximates a walk
++    # hand-off without simulating the walk — see the base factory docstring).
++    cfg.events["set_roulade_state"].params["forward_vel_range"] = DIVE_FORWARD_VEL_RANGE
++
++    # Launch-phase credit (run-4): pay REAL flight inside the <90° window —
++    # airborne steps pay a base component plus a bonus for base-z rising
++    # ABOVE standing height (height_gain), vx gate widened to cover the
++    # 1.2 m/s trigger regime. Replaces the run-3 capped-height product.
++    cfg.rewards["roulade_dive_launch"] = RewardTermCfg(
++        func=microduck_mdp.roulade_dive_launch_v2,
++        weight=DIVE_LAUNCH_WEIGHT,
++        params={
++            "vx_lo":         0.4,
++            "vx_hi":         1.25,
++            "stand_z":       STAND_Z,
++            "height_ref":    0.05,
++            "frontier_max":  math.radians(90.0),
++            "sensor_name":   "feet_ground_contact",
++        },
++    )
++
++    # Run-2: dense approach shaping — run-1's pure product gate stayed at
++    # ~0.0005 for 6000 iters (undiscoverable). This term pays the same three
++    # factors continuously through the pre-roll window so the gradient exists
++    # from step 0; the product term above remains the airborne bonus.
++    cfg.rewards["roulade_dive_approach"] = RewardTermCfg(
++        func=microduck_mdp.roulade_dive_approach,
++        weight=DIVE_APPROACH_WEIGHT,
++        params={
++            "vx_lo":         0.3,
++            "vx_hi":         0.75,
++            "omega_ref":     3.0,
++            "vz_ref":        0.3,
++            "frontier_max":  math.radians(90.0),
++        },
++    )
++
++    return cfg
++
++
++# ── Dive-wall variant (障碍物强制前扑) ───────────────────────────────────────
++# Run-4's dive reads as "momentum pushes it over", not an active leap: the
++# élan is injected horizontal velocity and nothing forces an upward launch.
++# The wall variant puts a heavy 6cm hurdle dead ahead of every spawn: the
++# only way to a completed roll is to LEAP over it (collision penalty +
++# cleared-plane bonus), so the launch becomes an active, duck-initiated
++# vault. The wall is training scaffolding only — NOT in the obs, so the
++# policy stays proprioceptive and the warm-start obs space is unchanged.
++WALL_COLLISION_WEIGHT = -2.0   # run-3: FLAT any-contact penalty (vaulting priced in)
++WALL_CLEARED_WEIGHT   = 0.2    # run-3: drip reduced 2.0 -> 0.2 (only pays "be past it")
++WALL_FLIGHT_WEIGHT    = 15.0   # run-3: one-shot flight-over-wall jackpot
++WALL_TAKEOFF_WEIGHT   = 6.0    # run-8: pitch-gated takeoff shaping (was 4.0 run-5..7)
++WALL_TAKEOFF_PITCH    = (10.0, 50.0)  # stage-2d: was (30,70) — duck never pitched past 30° (push-fed), takeoff 0 for 16k iters
++                                      # FREEZES at the wall (takeoff ate only 0.003 in 8k iters, gate
++                                      # too strict to ever taste). Lower ramp so a partial forward-lean
++                                      # takeoff starts paying.
++WALL_PUSH_WEIGHT      = 6.0    # stage-2d: was 8.0 — GIF: duck farms grounded pitched kicking (扑倒蹬地), never airborne
++                               # rising at the wall) is exactly the missing jump impulse; run-12
++                               # duck stands planted at the wall — pay any vz>0 there
++WALL_PUSH_PITCH       = (10.0, 30.0)  # run-14: run-13 lesson — vz-only push got farmed by tiny
++                               # STATIONARY hops at the wall (no run-up, GIF: rolls from a
++                               # standstill). Gate the push on a forward pitch ramp so "jump" and
++                               # "dive" must co-occur to earn credit.
++WALL_PUSH_VX_SCALE    = 1.0    # run-14: ×(0.3 + 0.7·clamp01(vx/vx_scale)) — stationary hop pays
++                               # ≤30% of the term; a moving push-off pays in full
++WALL_SHOVE_WEIGHT     = -3.0   # run-8b: per-step penalty while the wall is displaced/tilted
++WALL_RUNUP_WEIGHT     = 4.0    # run-14: was 2.0 — run-13 runup stalled at 0.07 for 8k iters
++                               # (user GIF: NO run-up at all, duck dives from a standstill);
++                               # double the pull toward leaning forward speed in the runway
++WALL_PREMATURE_ROLL_WEIGHT = -3.0  # run-14b: grounded pitch>45° more than 15cm before the
++WALL_PREMATURE_DIVE_WEIGHT = -0.5  # stage-2c: -2.0 caused policy oscillation/collapse (10-05); soften to correct-not-crush
++                               # wall costs — 在墙前远处翻滚甚至负向 (user 2026-10-04)
++WALL_DISTANCE_RANGE   = (0.85, 1.20)  # run-10: spawn→wall distance — was 0.22-0.30 (2 body
++                                      # lengths, no room for a visible approach); now 0.85-1.2 m
++                                      # so the élan carries a real run-up before the dive
++
++
++def make_microduck_roulade_divewall_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
++    """Dive entry forced by a hurdle the robot must vault to complete a roll."""
++    cfg = make_microduck_roulade_dive_env_cfg(play=play)
++
++    from mjlab_microduck.robot.microduck_constants import MICRODUCK_WALL_CFG
++
++    robot_cfg = cfg.scene.entities["robot"]
++    cfg.scene.entities = {"robot": robot_cfg, "wall": MICRODUCK_WALL_CFG}
++
++    # Robot-vs-wall contact sensor (force for the penalty).
++    cfg.scene.sensors = tuple(cfg.scene.sensors) + (
++        ContactSensorCfg(
++            name="robot_wall_contact",
++            primary=ContactMatch(mode="subtree", pattern="trunk_base", entity="robot"),
++            secondary=ContactMatch(mode="body", pattern="wall", entity="wall"),
++            fields=("found", "force"),
++            reduce="netforce",
++            num_slots=1,
++        ),
++    )
++    # Run-14 (user spec 2026-10-04): 墙前面翻滚不能给 reward —— 在墙附近前扑、
++    # 墙后头落地翻滚. Gate every roll-PAYOFF term (progress, head pivot,
++    # landing annuities) on the trunk already being PAST the wall plane.
++    # Launch/dive terms (dive_launch, airborne, rise, push, takeoff, runup)
++    # stay ungated — the pounce itself happens AT the wall by design.
++    for _roll_term in (
++        "roulade_progress",
++        "roulade_head_pivot",
++        "roulade_landing_composite",
++        "roulade_upright_after_roll",
++        "roulade_height_after_roll",
++        "roulade_landing_sharp",
++    ):
++        if _roll_term in cfg.rewards:
++            cfg.rewards[_roll_term].params["wall_name"] = "wall"
++    # Extra contact headroom for robot-wall contacts.
++    cfg.sim.nconmax = 60
++
++    # All spawns standing (mid-roll spawns would roll INTO the wall for
++    # free penalty — the kip-up skill is already baked in from run-4).
++    cfg.events["set_roulade_state"].params["standing_prob"] = 1.0
++    cfg.events["set_roulade_state"].params["midroll_prob"] = 0.0
++
++    # Wall placement — AFTER set_roulade_state (dict insertion order).
++    cfg.events["reset_wall"] = EventTermCfg(
++        func=microduck_mdp.reset_wall_ahead,
++        mode="reset",
++        params={"distance_range": WALL_DISTANCE_RANGE,
++                "wall_sink": float(_os.environ.get("DIVEWALL_WALL_SINK", "0") or 0)},
++    )
++
++    cfg.rewards["roulade_wall_collision"] = RewardTermCfg(
++        func=microduck_mdp.wall_contact_penalty,
++        weight=WALL_COLLISION_WEIGHT,
++    )
++    cfg.rewards["roulade_wall_cleared"] = RewardTermCfg(
++        func=microduck_mdp.wall_cleared_bonus,
++        weight=WALL_CLEARED_WEIGHT,
++        params={"robot_fwd_offset": 0.05, "min_height": 0.12},
++    )
++    cfg.rewards["roulade_wall_flight"] = RewardTermCfg(
++        func=microduck_mdp.wall_flight_clear_bonus,
++        weight=WALL_FLIGHT_WEIGHT,
++        params={"robot_fwd_offset": 0.05, "min_height": 0.12, "clearance": 0.02},
++    )
++    # Run-5: dense takeoff shaping in front of the wall (spread the sparse
++    # flight jackpot into a continuous gradient: load -> push -> rise).
++    cfg.rewards["roulade_wall_takeoff"] = RewardTermCfg(
++        func=microduck_mdp.wall_takeoff_shaping,
++        weight=WALL_TAKEOFF_WEIGHT,
++        params={
++            "zone_near": 0.02, "zone_far": 0.20,
++            "vz_scale": 0.5, "vx_scale": 1.2,
++            # Run-8 physics gate: wall top is only ~2 cm below standing COM
++            # (0.146 m) — clearing it requires a dive pitch at takeoff, not
++            # jump height. Pay the airborne rise ONLY when |pitch| has begun
++            # the dive (ramp 50°→85°).
++            "pitch_min_deg": WALL_TAKEOFF_PITCH[0],
++            "pitch_full_deg": WALL_TAKEOFF_PITCH[1],
++        },
++    )
++    # Run-6: grounded push-off credit (the leg extension itself — feet planted,
++    # trunk rising — earns reward in the approach zone).
++    cfg.rewards["roulade_wall_push"] = RewardTermCfg(
++        func=microduck_mdp.wall_push_shaping,
++        weight=WALL_PUSH_WEIGHT,
++        params={
++            "zone_near": 0.02, "zone_far": 0.25, "vz_scale": 0.3,
++            "vx_scale": WALL_PUSH_VX_SCALE,
++            "pitch_min_deg": WALL_PUSH_PITCH[0],
++            "pitch_full_deg": WALL_PUSH_PITCH[1],
++        },
++    )
++    # Run-8b: price the wall-shove exploit itself (probe 2026-10-02: the
++    # policy bulldozed the 2 kg free-joint wall aside and "crossed" at
++    # z≈0.05). Cleared/flight bonuses are also planted-gated (see mdp).
++    cfg.rewards["roulade_wall_shove"] = RewardTermCfg(
++        func=microduck_mdp.wall_shove_penalty,
++        weight=WALL_SHOVE_WEIGHT,
++    )
++    # Run-14b (user spec 2026-10-04): rolling FAR before the wall is now
++    # actively penalized (past-wall gating already zeroed its income).
++    cfg.rewards["roulade_wall_premature_roll"] = RewardTermCfg(
++        func=microduck_mdp.wall_premature_roll_penalty,
++        weight=WALL_PREMATURE_ROLL_WEIGHT,
++        params={"near_dist": 0.30, "pitch_thresh_deg": 30.0},
++    )
++    # Stage-2b (user 2026-10-05): 扑得太早 — penalize early pounces on the
++    # runway (airborne-with-pitch or deep grounded lunge beyond 30cm).
++    cfg.rewards["roulade_wall_premature_dive"] = RewardTermCfg(
++        func=microduck_mdp.wall_premature_dive_penalty,
++        weight=WALL_PREMATURE_DIVE_WEIGHT,
++        params={"near_dist": 0.30, "pitch_hi_deg": 32.0, "pitch_air_deg": 15.0},
++    )
++    # Run-9/11: no walking AROUND the wall — lateral strays end the episode.
++    # max_lat 0.7 sits INSIDE the 0.8m wall half-span (run-11: the 3m wall
++    # spilled into neighbour env lanes on the shared plane and got bowled
++    # across them — probe 2026-10-02 23:50; 0.7/0.8 is airtight + no spill).
++    cfg.terminations["wall_lateral"] = TerminationTermCfg(
++        func=microduck_mdp.wall_lateral_termination,
++        params={"max_lat": 0.7},
++    )
++    # Run-10: leaning run-up credit in the extended runway (see mdp).
++    # vx_lo 0.25 (not 0.4): the élan direction is not perfectly aligned with
++    # the spawn heading, so the along-heading component is ~0.7x the injected
++    # speed — a 0.4 gate pays ZERO at spawn (found 2026-10-02, runup stuck at
++    # 0.0001 for 1000 iters).
++    cfg.rewards["roulade_wall_runup"] = RewardTermCfg(
++        func=microduck_mdp.wall_runup_shaping,
++        weight=WALL_RUNUP_WEIGHT,
++        params={"zone_near": 0.30, "vx_lo": 0.25, "vx_full": 1.2, "lean_full_deg": 30.0, "lean_max_deg": 35.0},
++    )
++
++    # ── Run-15 CURRICULUM (user 2026-10-04): reward-shaping scaffolding is
++    # fighting itself — the duck still rolls BEFORE the wall. Split skill
++    # acquisition into 3 stages via DIVEWALL_STAGE env var:
++    #   stage 1  学跑步      — ONLY run-up credit (longer runway); every dive/
++    #                         roll/launch/airborne term OFF, premature-roll
++    #                         penalty ON, wall pushed back (far spawn).
++    #   stage 2  带初速前扑  — + push/takeoff/flight/cleared (the pounce);
++    #                         roll-payoff terms still OFF.
++    #   stage 3  前扑接翻滚  — everything on (the run-14b full config).
++    # Unset / 0 keeps the full config (backward compatible).
++    # (_os imported at module top — do NOT re-import here: a local
++    # `import os as _os` shadows the module-level one for the WHOLE
++    # function scope and crashes earlier references with
++    # "cannot access local variable '_os'").
++    _stage = int(_os.environ.get("DIVEWALL_STAGE", "0") or 0)
++    # CURRICULUM v3 (user 2026-10-07 编号定稿):
++    #   Stage-1-run 纯跑步 | Stage-2-jump 跳远 | Stage-3-run&jump 前扑跳 |
++    #   Stage-4-full 全流程 (unset/0 = full, backward compatible).
++    # Legacy v2 ids alias: 25→1, 21→2 (3/4 already match v3 numbering).
++    _stage = {25: 1, 21: 2}.get(_stage, _stage)
++    if _stage in (1, 2, 3):
++        # Curriculum v2 (user 2026-10-05 重新课程学习): school the JUMP in
++        # isolation before re-introducing the wall. 18 runs of wall-side
++        # shaping never bridged grounded-push → airborne-flight (mutual
++        # exclusion).   stage 21 跳远学校 — wall parked far away, hop credit.
++        #                      stage 22 前扑跳    — hop credit + pitch ramp.
++        #   stage 25 纯跑步学校 (user 2026-10-06 19:52: GIF verdict "还是
++        #   趴倒了…先学好第一步跑步"): reward 全部重置到跑步一件事——无 hop、
++        #   无 flop 罚、无一切墙侧 shaping，只有 runup + 基础姿态正则。
++        for _t in [
++            "roulade_progress", "roulade_head_pivot",
++            "roulade_landing_composite", "roulade_upright_after_roll",
++            "roulade_height_after_roll", "roulade_landing_sharp",
++            "roulade_stand_tax", "roulade_rise_velocity",
++            "roulade_dive_launch", "roulade_dive_approach", "roulade_airborne",
++            "roulade_wall_push", "roulade_wall_takeoff",
++            "roulade_wall_flight", "roulade_wall_cleared",
++            "roulade_wall_premature_dive", "roulade_wall_premature_roll",
++            # v4 (user 2026-10-07 精简): wall parked 4.5m away in stages 1-3 —
++            # wall-side penalties are dead weight, drop them.
++            "roulade_wall_collision", "roulade_wall_shove",
++            # v4: dead zero-weight terms.
++            "body_ang_vel", "angular_momentum", "joint_torque_rate_l2",
++            "arrival_damping", "gentle_landing",
++            # v4: weight-schedule curriculum terms reference the popped
++            # rewards above — drop them too or the manager raises.
++            "roulade_overspeed", "roulade_flatness", "roulade_sagittal",
++        ]:
++            cfg.rewards.pop(_t, None)
++        for _c in ("arrival_damping_weight", "torque_rate_weight",
++                   "gentle_landing_weight"):
++            cfg.curriculum.pop(_c, None)
++        cfg.terminations.pop("wall_lateral", None)
++        cfg.events["reset_wall"].params["distance_range"] = (4.5, 5.5)
++        if _stage == 1:
++            # RUN SCHOOL v4 (user 2026-10-07):
++            # ① runup lean bonus → PLATEAU: 0-15° 前倾与直立同分（稍微倾斜
++            #    的跑步有利于加速），35° 衰减到 0（趴地不挣钱）;
++            # ② 新增 prone_fall 罚：pitch>40° 即"跌倒"，趴地=跌倒同代价。
++            cfg.rewards["roulade_wall_runup"] = RewardTermCfg(
++                func=microduck_mdp.wall_runup_shaping,
++                weight=WALL_RUNUP_WEIGHT,
++                params={"zone_near": 0.30, "vx_lo": 0.25, "vx_full": 1.2,
++                        "lean_peak_deg": 15.0, "lean_zero_deg": 35.0,
++                        "lean_max_deg": 40.0},
++            )
++            cfg.rewards["prone_fall"] = RewardTermCfg(
++                func=microduck_mdp.prone_fall_penalty,
++                weight=-2.0,
++                params={"pitch_thresh_deg": 40.0},
++            )
++        else:
++            cfg.rewards["hop_forward"] = RewardTermCfg(
++                func=microduck_mdp.hop_forward_credit,
++                weight=6.0,
++                params=(
++                    # v3: vx hard gate 0.25 (no forward speed -> no hop pay);
++                    # vx_scale 1.2 aligned with the raised runup saturation.
++                    {"vz_scale": 0.4, "vx_scale": 1.2, "vx_gate": 0.25}
++                    if _stage == 2 else
++                    {"vz_scale": 0.4, "vx_scale": 1.0,
++                     "pitch_min_deg": 15.0, "pitch_full_deg": 60.0}
++                ),
++            )
++        if _stage == 2:
++            # Flop guard (2026-10-06): belly-flopes paid hop credit via the
++            # push-off vz — jumps must stay upright in jump school.
++            cfg.rewards["airborne_flop"] = RewardTermCfg(
++                func=microduck_mdp.airborne_flop_penalty,
++                weight=-2.0,
++                params={"pitch_thresh_deg": 50.0},
++            )
++    # (Curriculum v1 branch removed 2026-10-07 — superseded by the v3 ladder
++    #  above; DIVEWALL_STAGE=4 or unset = full config.)
++    # Run-4: wall-relative features for the CRITIC ONLY (teacher-student).
++    # The actor stays blind — wall is training scaffolding; the critic needs
++    # it to attribute the wall penalty/jackpot to the right states.
++    cfg.observations["critic"].terms["wall_rel"] = ObservationTermCfg(
++        func=microduck_mdp.wall_critic_obs, scale=1.0,
++    )
++    return cfg
++
++
+ # ── RL runner config ──────────────────────────────────────────────────────────
+ 
+ MicroduckRouladeRlCfg = RslRlOnPolicyRunnerCfg(
+@@ -765,8 +1149,19 @@ MicroduckRouladeRlCfg = RslRlOnPolicyRunnerCfg(
+     ),
+     wandb_project="mjlab_microduck",
+     experiment_name="microduck_roulade",
+-    run_name="microduck_roulade",
++    run_name="microduck_roulade_run6_kipup",
+     save_interval=250,
+     num_steps_per_env=24,
+     max_iterations=10_000,
+ )
++
++# Dive variant gets its own runner cfg (distinct experiment_name per AGENTS.md)
++# but inherits every hyperparameter from the roulade runner.
++MicroduckRouladeDiveRlCfg = deepcopy(MicroduckRouladeRlCfg)
++MicroduckRouladeDiveRlCfg.experiment_name = "microduck_roulade_dive"
++MicroduckRouladeDiveRlCfg.run_name = "microduck_roulade_dive_run1"
++
++# Dive-wall variant: same runner hyperparameters, own run name.
++MicroduckRouladeDiveWallRlCfg = deepcopy(MicroduckRouladeRlCfg)
++MicroduckRouladeDiveWallRlCfg.experiment_name = "microduck_roulade_dive"
++MicroduckRouladeDiveWallRlCfg.run_name = "microduck_roulade_divewall_run15"
+diff --git a/src/mjlab_microduck/tasks/microduck_sitstand_env_cfg.py b/src/mjlab_microduck/tasks/microduck_sitstand_env_cfg.py
+index fb8f8c6..ebac1ce 100644
+--- a/src/mjlab_microduck/tasks/microduck_sitstand_env_cfg.py
++++ b/src/mjlab_microduck/tasks/microduck_sitstand_env_cfg.py
+@@ -593,6 +593,17 @@ def make_microduck_sitstand_env_cfg(
+         time_out=False,
+     )
+ 
++    # ── Numeric robustness (same fix as roller_slope/roller_standup) ─────────
++    # A rare rough-terrain seated-contact divergence (~1/25M env-steps) produces
++    # NaN in the physics state. Because nan_state termination is applied on the
++    # NEXT substep, the NaN already reached the CURRENT step's observations
++    # (critic reads base_lin_vel + foot sensors directly) → rsl_rl's check_nan
++    # kills the whole run. nan_policy="sanitize" replaces NaN/Inf by 0 in the
++    # returned obs; the faulty env is still reset by nan_state (visible in
++    # wandb), but a single divergent step can no longer poison the run.
++    for grp in ("actor", "critic"):
++        cfg.observations[grp].nan_policy = "sanitize"
++
+     # ── Events ────────────────────────────────────────────────────────────────
+     # BAM (mjlab_frictionloss branch) writes per-env dof_frictionloss/dof_damping
+     # every step; this no-op event registers those fields for per-world expansion.
+diff --git a/src/mjlab_microduck/tasks/microduck_velocity_env_cfg.py b/src/mjlab_microduck/tasks/microduck_velocity_env_cfg.py
+index 45a1f6d..f866eb5 100644
+--- a/src/mjlab_microduck/tasks/microduck_velocity_env_cfg.py
++++ b/src/mjlab_microduck/tasks/microduck_velocity_env_cfg.py
+@@ -947,3 +947,102 @@ MicroduckRlCfg = RslRlOnPolicyRunnerCfg(
+     num_steps_per_env=24,
+     max_iterations=50_000,
+ )
++
++
++# Velocity-fast run1: linear range widening alone — policy learned to stand
++# still at high commands (see notes 2026-09-29). Kept for reference.
++def make_microduck_velocity_fast_env_cfg(
++    play: bool = False,
++) -> ManagerBasedRlEnvCfg:
++    cfg = make_microduck_velocity_env_cfg(play=play)
++    cfg.commands["twist"].ranges.lin_vel_x = (-0.4, 1.2)
++    return cfg
++
++
++MicroduckVelocityFastRlCfg = deepcopy(MicroduckRlCfg)
++MicroduckVelocityFastRlCfg.experiment_name = "velocity_fast"
++MicroduckVelocityFastRlCfg.run_name = "velocity_fast_run1"
++
++
++# Velocity-fast run2: range starts narrow and WIDENS via curriculum, plus a
++# high-speed-gated tracking bonus so walking fast pays more than standing.
++# Same reward structure otherwise; warm-start from the stock velocity policy.
++def make_microduck_velocity_fast2_env_cfg(
++    play: bool = False,
++) -> ManagerBasedRlEnvCfg:
++    cfg = make_microduck_velocity_env_cfg(play=play)
++    command = cfg.commands["twist"]
++    # Start inside the stock policy's competence; curriculum widens to 1.2.
++    command.ranges.lin_vel_x = (-0.4, 0.5)
++    # High-speed tracking bonus: base track term stays; this adds 1.0x extra
++    # (ramped to 2.0x by curriculum) paid only when |cmd vx| >= 0.5.
++    from mjlab.managers import RewardTermCfg
++    cfg.rewards["track_linear_velocity_highspeed"] = RewardTermCfg(
++        func=microduck_mdp.track_linear_velocity_highspeed,
++        weight=0.0,  # curriculum ramps 0 -> 1 -> 2
++        params={"std": math.sqrt(0.1), "command_name": "twist", "gate": 0.5},
++    )
++    # Command range curriculum: 0.5 -> 0.7 -> 0.9 -> 1.05 -> 1.2 m/s
++    # (common_step_counter units: 24 steps/env; iter N ~ N*24 steps)
++    cfg.curriculum["lin_vel_x_range"] = CurriculumTermCfg(
++        func=microduck_mdp.lin_vel_x_range_curriculum,
++        params={
++            "command_name": "twist",
++            "range_stages": [
++                {"step": 0,              "lin_vel_x": (-0.4, 0.5)},
++                {"step": 1500 * 24,      "lin_vel_x": (-0.4, 0.7)},
++                {"step": 3000 * 24,      "lin_vel_x": (-0.4, 0.9)},
++                {"step": 4500 * 24,      "lin_vel_x": (-0.4, 1.05)},
++                {"step": 6000 * 24,      "lin_vel_x": (-0.4, 1.2)},
++            ],
++        },
++    )
++    # Ramp the high-speed bonus weight in as the range widens.
++    cfg.curriculum["highspeed_bonus_weight"] = CurriculumTermCfg(
++        func=microduck_mdp.reward_weight,
++        params={
++            "reward_name": "track_linear_velocity_highspeed",
++            "weight_stages": [
++                {"step": 0,          "weight": 0.0},
++                {"step": 1500 * 24,  "weight": 1.0},
++                {"step": 3000 * 24,  "weight": 1.5},
++                {"step": 4500 * 24,  "weight": 2.0},
++            ],
++        },
++    )
++    return cfg
++
++
++# Velocity-fast run3: run2's curriculum used absolute common_step_counter
++# thresholds, so warm-starting from model_24999 (counter ~= 600k >> 144k max
++# stage) skipped every intermediate stage — range was 1.2 / weight 2.0 from
++# iteration 1, i.e. run1 all over again. Run3 rebases all stage steps on the
++# warm-start baseline (25'000 iters) so the range really widens 0.5 -> 1.2.
++def make_microduck_velocity_fast3_env_cfg(
++    play: bool = False,
++) -> ManagerBasedRlEnvCfg:
++    cfg = make_microduck_velocity_fast2_env_cfg(play=play)
++    base = 25000 * 24  # warm-start baseline in common_step_counter units
++    cfg.curriculum["lin_vel_x_range"].params["range_stages"] = [
++        {"step": base,             "lin_vel_x": (-0.4, 0.5)},
++        {"step": base + 1500 * 24, "lin_vel_x": (-0.4, 0.7)},
++        {"step": base + 3000 * 24, "lin_vel_x": (-0.4, 0.9)},
++        {"step": base + 4500 * 24, "lin_vel_x": (-0.4, 1.05)},
++        {"step": base + 6000 * 24, "lin_vel_x": (-0.4, 1.2)},
++    ]
++    cfg.curriculum["highspeed_bonus_weight"].params["weight_stages"] = [
++        {"step": base,             "weight": 0.0},
++        {"step": base + 1500 * 24, "weight": 1.0},
++        {"step": base + 3000 * 24, "weight": 1.5},
++        {"step": base + 4500 * 24, "weight": 2.0},
++    ]
++    return cfg
++
++
++MicroduckVelocityFast2RlCfg = deepcopy(MicroduckRlCfg)
++MicroduckVelocityFast2RlCfg.experiment_name = "velocity_fast"
++MicroduckVelocityFast2RlCfg.run_name = "velocity_fast_run2"
++
++MicroduckVelocityFast3RlCfg = deepcopy(MicroduckRlCfg)
++MicroduckVelocityFast3RlCfg.experiment_name = "velocity_fast"
++MicroduckVelocityFast3RlCfg.run_name = "velocity_fast_run3"
+diff --git a/uv.lock b/uv.lock
+index 2d20aec..d0af298 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -103,12 +103,35 @@ wheels = [
+ [[package]]
+ name = "better-actuator-models"
+ version = "1.0.1"
+-source = { git = "https://github.com/Rhoban/bam.git?branch=mjlab_frictionloss#62bd8ce12154340be97e06f7f41a0ca8f116d967" }
++source = { directory = "../bam" }
+ dependencies = [
+     { name = "colorama" },
+     { name = "numpy" },
+ ]
+ 
++[package.metadata]
++requires-dist = [
++    { name = "better-actuator-models", extras = ["mujoco", "mjlab", "identification"], marker = "extra == 'all'" },
++    { name = "cmaes", marker = "extra == 'identification'" },
++    { name = "colorama" },
++    { name = "dynamixel-sdk", marker = "extra == 'identification'" },
++    { name = "matplotlib", marker = "extra == 'identification'" },
++    { name = "mjlab", marker = "extra == 'mjlab'", specifier = ">=1.3,<1.4" },
++    { name = "mujoco", marker = "extra == 'mjlab'", specifier = ">=3.7,<3.8" },
++    { name = "mujoco", marker = "extra == 'mujoco'" },
++    { name = "mujoco-warp", marker = "extra == 'mjlab'", specifier = ">=3.7,<3.8" },
++    { name = "numpy" },
++    { name = "optuna", marker = "extra == 'identification'" },
++    { name = "protobuf", marker = "extra == 'identification'", specifier = ">=3.20,<4.0" },
++    { name = "pyqt5", marker = "extra == 'identification'" },
++    { name = "rustypot", marker = "extra == 'identification'", specifier = ">=1.5.0" },
++    { name = "scipy", marker = "extra == 'mjlab'" },
++    { name = "wandb", marker = "extra == 'identification'" },
++    { name = "warp-lang", marker = "extra == 'mjlab'", specifier = ">=1.12,<1.13" },
++    { name = "zmq", marker = "extra == 'identification'" },
++]
++provides-extras = ["mujoco", "mjlab", "identification", "all"]
++
+ [[package]]
+ name = "certifi"
+ version = "2026.1.4"
+@@ -834,7 +857,7 @@ dependencies = [
+ 
+ [package.metadata]
+ requires-dist = [
+-    { name = "better-actuator-models", git = "https://github.com/Rhoban/bam.git?branch=mjlab_frictionloss" },
++    { name = "better-actuator-models", directory = "../bam" },
+     { name = "huggingface-hub", specifier = ">=0.27.0" },
+     { name = "matplotlib", specifier = ">=3.10.9" },
+     { name = "mjlab", specifier = "==1.3.0" },
