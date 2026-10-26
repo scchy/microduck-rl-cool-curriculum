@@ -947,3 +947,102 @@ MicroduckRlCfg = RslRlOnPolicyRunnerCfg(
     num_steps_per_env=24,
     max_iterations=50_000,
 )
+
+
+# Velocity-fast run1: linear range widening alone — policy learned to stand
+# still at high commands (see notes 2026-09-29). Kept for reference.
+def make_microduck_velocity_fast_env_cfg(
+    play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+    cfg = make_microduck_velocity_env_cfg(play=play)
+    cfg.commands["twist"].ranges.lin_vel_x = (-0.4, 1.2)
+    return cfg
+
+
+MicroduckVelocityFastRlCfg = deepcopy(MicroduckRlCfg)
+MicroduckVelocityFastRlCfg.experiment_name = "velocity_fast"
+MicroduckVelocityFastRlCfg.run_name = "velocity_fast_run1"
+
+
+# Velocity-fast run2: range starts narrow and WIDENS via curriculum, plus a
+# high-speed-gated tracking bonus so walking fast pays more than standing.
+# Same reward structure otherwise; warm-start from the stock velocity policy.
+def make_microduck_velocity_fast2_env_cfg(
+    play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+    cfg = make_microduck_velocity_env_cfg(play=play)
+    command = cfg.commands["twist"]
+    # Start inside the stock policy's competence; curriculum widens to 1.2.
+    command.ranges.lin_vel_x = (-0.4, 0.5)
+    # High-speed tracking bonus: base track term stays; this adds 1.0x extra
+    # (ramped to 2.0x by curriculum) paid only when |cmd vx| >= 0.5.
+    from mjlab.managers import RewardTermCfg
+    cfg.rewards["track_linear_velocity_highspeed"] = RewardTermCfg(
+        func=microduck_mdp.track_linear_velocity_highspeed,
+        weight=0.0,  # curriculum ramps 0 -> 1 -> 2
+        params={"std": math.sqrt(0.1), "command_name": "twist", "gate": 0.5},
+    )
+    # Command range curriculum: 0.5 -> 0.7 -> 0.9 -> 1.05 -> 1.2 m/s
+    # (common_step_counter units: 24 steps/env; iter N ~ N*24 steps)
+    cfg.curriculum["lin_vel_x_range"] = CurriculumTermCfg(
+        func=microduck_mdp.lin_vel_x_range_curriculum,
+        params={
+            "command_name": "twist",
+            "range_stages": [
+                {"step": 0,              "lin_vel_x": (-0.4, 0.5)},
+                {"step": 1500 * 24,      "lin_vel_x": (-0.4, 0.7)},
+                {"step": 3000 * 24,      "lin_vel_x": (-0.4, 0.9)},
+                {"step": 4500 * 24,      "lin_vel_x": (-0.4, 1.05)},
+                {"step": 6000 * 24,      "lin_vel_x": (-0.4, 1.2)},
+            ],
+        },
+    )
+    # Ramp the high-speed bonus weight in as the range widens.
+    cfg.curriculum["highspeed_bonus_weight"] = CurriculumTermCfg(
+        func=microduck_mdp.reward_weight,
+        params={
+            "reward_name": "track_linear_velocity_highspeed",
+            "weight_stages": [
+                {"step": 0,          "weight": 0.0},
+                {"step": 1500 * 24,  "weight": 1.0},
+                {"step": 3000 * 24,  "weight": 1.5},
+                {"step": 4500 * 24,  "weight": 2.0},
+            ],
+        },
+    )
+    return cfg
+
+
+# Velocity-fast run3: run2's curriculum used absolute common_step_counter
+# thresholds, so warm-starting from model_24999 (counter ~= 600k >> 144k max
+# stage) skipped every intermediate stage — range was 1.2 / weight 2.0 from
+# iteration 1, i.e. run1 all over again. Run3 rebases all stage steps on the
+# warm-start baseline (25'000 iters) so the range really widens 0.5 -> 1.2.
+def make_microduck_velocity_fast3_env_cfg(
+    play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+    cfg = make_microduck_velocity_fast2_env_cfg(play=play)
+    base = 25000 * 24  # warm-start baseline in common_step_counter units
+    cfg.curriculum["lin_vel_x_range"].params["range_stages"] = [
+        {"step": base,             "lin_vel_x": (-0.4, 0.5)},
+        {"step": base + 1500 * 24, "lin_vel_x": (-0.4, 0.7)},
+        {"step": base + 3000 * 24, "lin_vel_x": (-0.4, 0.9)},
+        {"step": base + 4500 * 24, "lin_vel_x": (-0.4, 1.05)},
+        {"step": base + 6000 * 24, "lin_vel_x": (-0.4, 1.2)},
+    ]
+    cfg.curriculum["highspeed_bonus_weight"].params["weight_stages"] = [
+        {"step": base,             "weight": 0.0},
+        {"step": base + 1500 * 24, "weight": 1.0},
+        {"step": base + 3000 * 24, "weight": 1.5},
+        {"step": base + 4500 * 24, "weight": 2.0},
+    ]
+    return cfg
+
+
+MicroduckVelocityFast2RlCfg = deepcopy(MicroduckRlCfg)
+MicroduckVelocityFast2RlCfg.experiment_name = "velocity_fast"
+MicroduckVelocityFast2RlCfg.run_name = "velocity_fast_run2"
+
+MicroduckVelocityFast3RlCfg = deepcopy(MicroduckRlCfg)
+MicroduckVelocityFast3RlCfg.experiment_name = "velocity_fast"
+MicroduckVelocityFast3RlCfg.run_name = "velocity_fast_run3"

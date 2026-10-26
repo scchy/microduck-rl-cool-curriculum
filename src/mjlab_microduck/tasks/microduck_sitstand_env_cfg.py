@@ -593,6 +593,17 @@ def make_microduck_sitstand_env_cfg(
         time_out=False,
     )
 
+    # ── Numeric robustness (same fix as roller_slope/roller_standup) ─────────
+    # A rare rough-terrain seated-contact divergence (~1/25M env-steps) produces
+    # NaN in the physics state. Because nan_state termination is applied on the
+    # NEXT substep, the NaN already reached the CURRENT step's observations
+    # (critic reads base_lin_vel + foot sensors directly) → rsl_rl's check_nan
+    # kills the whole run. nan_policy="sanitize" replaces NaN/Inf by 0 in the
+    # returned obs; the faulty env is still reset by nan_state (visible in
+    # wandb), but a single divergent step can no longer poison the run.
+    for grp in ("actor", "critic"):
+        cfg.observations[grp].nan_policy = "sanitize"
+
     # ── Events ────────────────────────────────────────────────────────────────
     # BAM (mjlab_frictionloss branch) writes per-env dof_frictionloss/dof_damping
     # every step; this no-op event registers those fields for per-world expansion.
