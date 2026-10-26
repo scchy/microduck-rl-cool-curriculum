@@ -56,3 +56,6 @@ MUJOCO_GL=egl PYOPENGL_PLATFORM=egl .venv/bin/python scripts/video_rollout.py \
 MP4=$(ls -t "$RUN_DIR"/videos/play/*.mp4 2>/dev/null | head -1)
 [ -n "$MP4" ] && ffmpeg -y -i "$MP4" -vf "fps=12,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse" logs/gifs/phaseB20_wall_final.gif > /dev/null 2>&1 && echo "=== [gif done] logs/gifs/phaseB20_wall_final.gif ==="
 echo "=== ALL DONE @ $(date) ==="
+
+# 课程链: 训练完自动出 GIF (供 Obsidian/blog 留档)
+bash scripts/make_stage_gif.sh "${GIF_NAME:-lean_b20_steep}"
