@@ -18,6 +18,7 @@ MICRODUCK_WALK_XML: Path = _ROBOT_DIR / "robot_walk.xml"
 MICRODUCK_ALLCOLLISIONS_XML: Path = _ROBOT_DIR / "robot_allcollisions.xml"
 # 70mm / 15g ball prop for the BallKick task.
 MICRODUCK_BALL_XML: Path = _ROBOT_DIR / "ball.xml"
+MICRODUCK_WALL_XML: Path = _ROBOT_DIR / "wall.xml"
 # Roller-skate model: 14 actuated joints + passive wheel hinges (passive_*wheel).
 MICRODUCK_ALLCOLLISIONS_ROLLERS_XML: Path = _ROBOT_DIR / "robot_allcollisions_rollers.xml"
 # Backlash models: every servo joint gets an unactuated passive_<joint>_backlash
@@ -30,6 +31,7 @@ MICRODUCK_ALLCOLLISIONS_ROLLERS_BACKLASH_XML: Path = _ROBOT_DIR / "robot_allcoll
 assert MICRODUCK_WALK_XML.exists(), f"XML not found: {MICRODUCK_WALK_XML}"
 assert MICRODUCK_ALLCOLLISIONS_XML.exists(), f"XML not found: {MICRODUCK_ALLCOLLISIONS_XML}"
 assert MICRODUCK_BALL_XML.exists(), f"XML not found: {MICRODUCK_BALL_XML}"
+assert MICRODUCK_WALL_XML.exists(), f"XML not found: {MICRODUCK_WALL_XML}"
 assert MICRODUCK_ALLCOLLISIONS_ROLLERS_XML.exists(), f"XML not found: {MICRODUCK_ALLCOLLISIONS_ROLLERS_XML}"
 assert MICRODUCK_ALLCOLLISIONS_BACKLASH_XML.exists(), f"XML not found: {MICRODUCK_ALLCOLLISIONS_BACKLASH_XML}"
 assert MICRODUCK_WALK_BACKLASH_XML.exists(), f"XML not found: {MICRODUCK_WALK_BACKLASH_XML}"
@@ -56,6 +58,23 @@ def get_walk_rollers_spec() -> mujoco.MjSpec:
 
 def get_ball_spec() -> mujoco.MjSpec:
     return mujoco.MjSpec.from_file(str(MICRODUCK_BALL_XML))
+
+
+def get_wall_spec() -> mujoco.MjSpec:
+    spec = mujoco.MjSpec.from_file(str(MICRODUCK_WALL_XML))
+    # 2026-10-17 fix: DIVEWALL_WALL_SINK as a *pose* offset is physically
+    # broken — the 500kg free box gets ejected by ground contact back to the
+    # full 12cm within ~40 steps (probe wall_z_probe). Instead, shrink the
+    # geom so effective height H = 0.12 - sink is REAL geometry.
+    import os as _os
+    _sink = float(_os.environ.get("DIVEWALL_WALL_SINK", "0") or 0)
+    if _sink > 0.0:
+        H = 0.12 - _sink  # effective wall height
+        body = spec.body("wall")
+        geom = body.geoms[0]
+        geom.size[2] = H / 2.0
+        body.pos[2] = H / 2.0  # rest exactly on the ground
+    return spec
 
 
 def get_backlash_spec() -> mujoco.MjSpec:
@@ -232,6 +251,13 @@ MICRODUCK_ROLLERS_BACKLASH_ROBOT_CFG = EntityCfg(
 MICRODUCK_BALL_CFG = EntityCfg(
     spec_fn=get_ball_spec,
     init_state=EntityCfg.InitialStateCfg(pos=(0.3, 0.0, 0.035)),
+)
+
+# Heavy low hurdle for the dive-wall variant (see wall.xml). Repositioned at
+# every reset by mdp.reset_wall_ahead, ahead of the robot's spawn yaw.
+MICRODUCK_WALL_CFG = EntityCfg(
+    spec_fn=get_wall_spec,
+    init_state=EntityCfg.InitialStateCfg(pos=(0.3, 0.0, 0.06)),
 )
 
 # Roller skate robot: the 4 passive wheel joints (passive_*wheel) have no XML

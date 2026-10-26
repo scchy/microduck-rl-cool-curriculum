@@ -17,7 +17,13 @@ class MicroduckOnPolicyRunner(VelocityOnPolicyRunner):
 
 from .microduck_velocity_env_cfg import (
     make_microduck_velocity_env_cfg,
+    make_microduck_velocity_fast_env_cfg,
+    make_microduck_velocity_fast2_env_cfg,
+    make_microduck_velocity_fast3_env_cfg,
     MicroduckRlCfg,
+    MicroduckVelocityFastRlCfg,
+    MicroduckVelocityFast2RlCfg,
+    MicroduckVelocityFast3RlCfg,
 )
 from .microduck_standup_env_cfg import (
     make_microduck_standup_env_cfg,
@@ -65,7 +71,11 @@ from .microduck_spin_env_cfg import (
 )
 from .microduck_roulade_env_cfg import (
     make_microduck_roulade_env_cfg,
+    make_microduck_roulade_dive_env_cfg,
+    make_microduck_roulade_divewall_env_cfg,
     MicroduckRouladeRlCfg,
+    MicroduckRouladeDiveRlCfg,
+    MicroduckRouladeDiveWallRlCfg,
 )
 from .backlash import make_backlash_variant
 
@@ -83,6 +93,35 @@ register_mjlab_task(
     env_cfg=make_microduck_velocity_env_cfg(rough=True),
     play_env_cfg=make_microduck_velocity_env_cfg(play=True, rough=True),
     rl_cfg=MicroduckRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Velocity-fast — same policy structure, lin_vel_x widened to (-0.4, 1.2)
+# so the walk can reach the dive élan range without momentum injection.
+register_mjlab_task(
+    task_id="Mjlab-VelocityFast-Flat-MicroDuck",
+    env_cfg=make_microduck_velocity_fast_env_cfg(),
+    play_env_cfg=make_microduck_velocity_fast_env_cfg(play=True),
+    rl_cfg=MicroduckVelocityFastRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Velocity-fast run2 — range curriculum + high-speed tracking bonus.
+register_mjlab_task(
+    task_id="Mjlab-VelocityFast2-Flat-MicroDuck",
+    env_cfg=make_microduck_velocity_fast2_env_cfg(),
+    play_env_cfg=make_microduck_velocity_fast2_env_cfg(play=True),
+    rl_cfg=MicroduckVelocityFast2RlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Velocity-fast run3 — curriculum rebased on warm-start baseline so the
+# range actually widens stage by stage (run2 skipped all stages).
+register_mjlab_task(
+    task_id="Mjlab-VelocityFast3-Flat-MicroDuck",
+    env_cfg=make_microduck_velocity_fast3_env_cfg(),
+    play_env_cfg=make_microduck_velocity_fast3_env_cfg(play=True),
+    rl_cfg=MicroduckVelocityFast3RlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 
@@ -222,6 +261,28 @@ register_mjlab_task(
     env_cfg=make_microduck_roulade_env_cfg(),
     play_env_cfg=make_microduck_roulade_env_cfg(play=True),
     rl_cfg=MicroduckRouladeRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Dive-roll (前扑滚翻) — roulade entered with forward momentum + an airborne
+# dive-launch phase. Same roll/landing machinery; the élan spawn hook carries
+# 0.1–0.3 m/s of forward speed and roulade_dive_launch pays the entry.
+register_mjlab_task(
+    task_id="Mjlab-RouladeDive-Flat-MicroDuck",
+    env_cfg=make_microduck_roulade_dive_env_cfg(),
+    play_env_cfg=make_microduck_roulade_dive_env_cfg(play=True),
+    rl_cfg=MicroduckRouladeDiveRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Dive-wall — obstacle-forced dive: heavy 6cm hurdle ahead of every spawn;
+# vaulting it is the only route to a completed roll. Wall is training
+# scaffolding only (not in obs — policy stays proprioceptive).
+register_mjlab_task(
+    task_id="Mjlab-RouladeDiveWall-Flat-MicroDuck",
+    env_cfg=make_microduck_roulade_divewall_env_cfg(),
+    play_env_cfg=make_microduck_roulade_divewall_env_cfg(play=True),
+    rl_cfg=MicroduckRouladeDiveWallRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 

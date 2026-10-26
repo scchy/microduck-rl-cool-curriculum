@@ -473,6 +473,12 @@ def make_microduck_ground_pick_env_cfg(play: bool = False, rough: bool = False) 
         time_out=False,
     )
 
+    # ── Numeric robustness (same fix as roller_slope/roller_standup/sitstand) ─
+    # nan_state resets only on the NEXT substep; sanitize obs NaN/Inf → 0 so a
+    # single divergent step can't kill the run via rsl_rl check_nan.
+    for grp in ("actor", "critic"):
+        cfg.observations[grp].nan_policy = "sanitize"
+
     # ── Events ────────────────────────────────────────────────────────────────
     # BAM (mjlab_frictionloss branch) writes per-env dof_frictionloss/dof_damping
     # every step; this no-op event registers those fields for per-world expansion.

@@ -1,6 +1,7 @@
 """MDP functions for microduck tasks"""
 
 import math
+import os as _os
 from dataclasses import dataclass as _dataclass
 
 import numpy as np
@@ -1596,6 +1597,24 @@ def joint_torques_l2(
 
     # Return L2 squared norm
     return torch.sum(torch.square(actuator_forces), dim=1)
+
+
+def action_rate_l2_bounded(
+    env: ManagerBasedRlEnv,
+    sq_cap: float = 25.0,
+) -> torch.Tensor:
+    """action_rate_l2 with a per-env cap (stage21v4 fix, 2026-10-06).
+
+    The stock sum-of-squares exploded to ~1e6-3e6 on isolated envs (single
+    wild action pair); at weight -0.1 each spike was a -1e5..-3e5 gradient
+    kick that repeatedly knocked the policy off its hop-learning track
+    (hop peaked 0.029 then decayed 5x). Capping the squared sum at sq_cap
+    keeps the shaping gradient but defuses the bombs.
+    """
+    raw = torch.sum(
+        torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1
+    )
+    return raw.clamp(max=sq_cap)
 
 
 def joint_torque_rate_l2(
@@ -6678,6 +6697,27 @@ _HEAD_TOP_DOWN_MIN = 0.3
 _FLAT_FULL = 0.5    # |lateral_axis_z| = sin(30°): full credit below
 _FLAT_ZERO = 0.866  # sin(60°): zero credit above
 
+# Phase-B17 (2026-10-20, 大人选方向2): B13-B16 四版 frontier 一律卡在
+# 90-140° 从未过 180°——奖励侧手段试遍后怀疑形貌物理: 扁喙圆身可能根本
+# 翻不过头顶正上方。放宽到允许斜向肩滚 (人 beginner 的低能量路径, run-4
+# 曾自发找到但被 run-5 严判封死):
+#   ① flatness gate 30°/60° → 45°/75° (对角线滚整程有 credit);
+#   ② head latch 撤销 head-top-down 严判 (窗口内头触地即 latch——肩滚
+#      时头顶轴不朝地, run-5 的判定直接排除肩滚)。
+# 注意 B17 下 run-4 的"肩滚作弊"风险回来了, 但现在的立场是: 先滚过去,
+# 直滚规整留给后续版本。
+if _os.environ.get("DIVEWALL_PHASE_B17"):
+    _FLAT_FULL = 0.707   # sin(45°)
+    _FLAT_ZERO = 0.966   # sin(75°)
+    _HEAD_TOP_DOWN_MIN = -1.1  # axis_world_z < 1.1 恒真 → 严判关闭
+
+# Frontier crossing that starts the post-roll rise clock (run-6): matches the
+# LANDING_GATE_LO the cfg gates its landing family with. `_roulade_open_step`
+# records the absolute step each env first crossed it (late midroll spawns are
+# born past it — their rise clock starts at birth, which is the point).
+_RISE_OPEN_REF = math.radians(260.0)
+_ROULADE_OPEN_NEVER = 1e12
+
 
 def _lateral_axis_z(quat: torch.Tensor) -> torch.Tensor:
     """World-z component of the body's lateral (y) axis. 0 = flat/sagittal."""
@@ -6713,6 +6753,7 @@ def _roulade_state(env: ManagerBasedRlEnv) -> tuple:
         env._roulade_max = z.clone()
         env._roulade_paid = z.clone()
         env._roulade_head_latch = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        env._roulade_open_step = torch.full((env.num_envs,), _ROULADE_OPEN_NEVER, device=env.device)
         env._roulade_last_update_step = -1
     return env._roulade_accum, env._roulade_max, env._roulade_paid
 
@@ -6739,13 +6780,37 @@ def _update_roulade_accum(env: ManagerBasedRlEnv, asset: Entity) -> None:
         delta = torch.nan_to_num(omega_fwd, nan=0.0) * env.step_dt
         supported = _sensor_any_contact(env, _ROULADE_SUPPORT_SENSOR)
         if supported is not None:
-            delta = delta * supported.float()
+            if _os.environ.get("DIVEWALL_PHASE_B15"):
+                # Phase-B15 (2026-10-19): the roll's energy must come from
+                # the dive's angular momentum — but airborne rotation was
+                # integrated nowhere, so the policy learned a FLAT pounce and
+                # the landing dumped all rotation (frontier froze ~0.77π).
+                # Carry-over rule: airborne forward pitch PAST the wall plane
+                # counts into the accumulator (weight 1); airborne rotation
+                # before the wall still counts ZERO (run-1 ballistic-whip
+                # lesson intact — no pre-wall whipping).
+                past_wall = _past_wall_mask(env, asset, "wall")
+                airborne_ok = past_wall * (1.0 - supported.float())
+                delta = delta * (supported.float() + airborne_ok)
+            else:
+                delta = delta * supported.float()
         # Sagittal flatness gate (run-5): side/shoulder rolls don't count.
         y_z = torch.nan_to_num(_lateral_axis_z(asset.data.root_link_quat_w), nan=1.0).abs()
         t = torch.clamp((_FLAT_ZERO - y_z) / (_FLAT_ZERO - _FLAT_FULL), 0.0, 1.0)
         delta = delta * (t * t * (3.0 - 2.0 * t))
         env._roulade_accum = env._roulade_accum + delta
         env._roulade_max = torch.maximum(env._roulade_max, env._roulade_accum)
+        # Rise clock (run-6): stamp the step each env first pushed the frontier
+        # past _RISE_OPEN_REF — the stand_tax ramp and post-roll timing read it.
+        newly_open = (env._roulade_max >= _RISE_OPEN_REF) & (
+            env._roulade_open_step >= _ROULADE_OPEN_NEVER
+        )
+        if newly_open.any():
+            env._roulade_open_step = torch.where(
+                newly_open,
+                torch.full_like(env._roulade_open_step, float(step)),
+                env._roulade_open_step,
+            )
 
         head_contact = _sensor_any_contact(env, _ROULADE_HEAD_SENSOR)
         if head_contact is not None:
@@ -6908,6 +6973,14 @@ def reset_roulade_state(
     accum[env_ids] = spawn_angle
     max_accum[env_ids] = spawn_angle
     paid[env_ids] = spawn_angle
+    # Rise clock: late midroll spawns are born past the gate reference — their
+    # stand_tax ramp starts at birth (the fold they spawn in is exactly the
+    # basin the ramp prices); everyone else waits for a real crossing.
+    env._roulade_open_step[env_ids] = torch.where(
+        spawn_angle >= _RISE_OPEN_REF,
+        torch.full_like(spawn_angle, float(env.common_step_counter)),
+        torch.full_like(spawn_angle, _ROULADE_OPEN_NEVER),
+    )
     # Head latch: mid-roll spawns are considered already past the head phase
     # (the reverse curriculum teaches roll COMPLETION; requiring a latch they
     # never had the chance to earn would keep their landing gate shut forever).
@@ -6920,6 +6993,7 @@ def roulade_progress(
     target_angle: float = 2 * math.pi,
     max_paid_rate: float = 3.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
 ) -> torch.Tensor:
     """Pay increments of the progress frontier, up to one full roll.
 
@@ -6933,6 +7007,12 @@ def roulade_progress(
     excess — the paid pointer still jumps to the frontier, it just pays the
     capped amount. A violent whip therefore collects LESS total progress
     reward than a controlled ≤cap roll, instead of the same total sooner.
+
+    wall_name (run-14 divewall): when set, progress increments earned BEFORE
+    the wall plane (signed fwd-dist < 0) are paid ZERO — the roll must land
+    PAST the wall to collect. (User spec 2026-10-04: 墙前面翻滚不能给 reward，
+    在墙附近前扑、墙后落地翻滚.) The frontier pointer still advances, so the
+    pre-wall rotation isn't double-paid after crossing either.
     """
     asset: Entity = env.scene[asset_cfg.name]
     _update_roulade_accum(env, asset)
@@ -6941,7 +7021,30 @@ def roulade_progress(
     delta = torch.clamp(new_paid - torch.clamp(paid, max=target_angle), min=0.0)
     delta = torch.clamp(delta, max=max_paid_rate * env.step_dt)
     env._roulade_paid = torch.maximum(paid, new_paid)
-    return delta / (env.step_dt * target_angle)
+    reward = delta / (env.step_dt * target_angle)
+    if wall_name is not None:
+        reward = reward * _past_wall_mask(env, asset, wall_name)
+    return reward
+
+
+def _past_wall_mask(
+    env: ManagerBasedRlEnv, asset: Entity, wall_name: str
+) -> torch.Tensor:
+    """Run-14 divewall helper: 1.0 once the robot's trunk is PAST the wall
+    plane (signed fwd-dist > 0), 0.0 while still on the approach side.
+    Yaw-safe via the trunk heading; NaN-safe; missing wall → ones."""
+    # NOTE: `wall_name in env.scene` is UNSAFE on mjlab Scene — __contains__
+    # iterates the string and raises KeyError per character. Probe by access.
+    try:
+        wall: Entity = env.scene[wall_name]
+    except KeyError:
+        return torch.ones(env.num_envs, device=env.device)
+    rpos = asset.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    return (torch.nan_to_num(dist, nan=1.0) > 0.0).float()
 
 
 def roulade_head_pivot(
@@ -6951,6 +7054,7 @@ def roulade_head_pivot(
     angle_hi: float = math.radians(240.0),
     rate_norm: float = 2.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
 ) -> torch.Tensor:
     """Reward head-ground contact while rotating forward mid-roll.
 
@@ -6975,7 +7079,10 @@ def roulade_head_pivot(
     omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
     rate = torch.clamp(torch.nan_to_num(omega_fwd, nan=0.0) / rate_norm, 0.0, 1.0)
     top = 0.3 + 0.7 * _head_top_down(env, asset).float()
-    return contact * in_window * rate * top
+    r = contact * in_window * rate * top
+    if wall_name is not None:
+        r = r * _past_wall_mask(env, asset, wall_name)
+    return r
 
 
 def roulade_landing_composite(
@@ -6989,6 +7096,7 @@ def roulade_landing_composite(
     gate_hi: float = math.radians(330.0),
     target_overrides: Optional[dict] = None,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
 ) -> torch.Tensor:
     """standing_composite_score × completion gate.
 
@@ -7009,7 +7117,10 @@ def roulade_landing_composite(
         target_overrides=target_overrides,
         asset_cfg=asset_cfg,
     )
-    return score * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+    r = score * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+    if wall_name is not None:
+        r = r * _past_wall_mask(env, asset, wall_name)
+    return r
 
 
 def roulade_upright_after_roll(
@@ -7017,6 +7128,7 @@ def roulade_upright_after_roll(
     gate_lo: float = math.radians(260.0),
     gate_hi: float = math.radians(330.0),
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
 ) -> torch.Tensor:
     """Linear cos(tilt) × completion gate — bootstrap pull toward vertical.
 
@@ -7028,9 +7140,12 @@ def roulade_upright_after_roll(
     _update_roulade_accum(env, asset)
     quat = asset.data.root_link_quat_w
     upright = 1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
-    return torch.clamp(upright, min=0.0) * _roulade_completion_gate(
+    r = torch.clamp(upright, min=0.0) * _roulade_completion_gate(
         env, gate_lo, gate_hi, require_head=True
     )
+    if wall_name is not None:
+        r = r * _past_wall_mask(env, asset, wall_name)
+    return r
 
 
 def roulade_height_after_roll(
@@ -7040,6 +7155,7 @@ def roulade_height_after_roll(
     gate_lo: float = math.radians(260.0),
     gate_hi: float = math.radians(330.0),
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
 ) -> torch.Tensor:
     """Broad height Gaussian × completion gate — pull up to standing height."""
     asset: Entity = env.scene[asset_cfg.name]
@@ -7048,7 +7164,10 @@ def roulade_height_after_roll(
         asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
     )
     g = torch.exp(-((z - target_height) / std) ** 2)
-    return g * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+    r = g * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+    if wall_name is not None:
+        r = r * _past_wall_mask(env, asset, wall_name)
+    return r
 
 
 def roulade_landing_sharp(
@@ -7059,6 +7178,7 @@ def roulade_landing_sharp(
     gate_lo: float = math.radians(260.0),
     gate_hi: float = math.radians(330.0),
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
 ) -> torch.Tensor:
     """Tight-std upright × height Gaussians × completion gate — the last mile.
 
@@ -7078,7 +7198,10 @@ def roulade_landing_sharp(
     )
     height_g = torch.exp(-((z - target_height) / height_std) ** 2)
     gate = _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
-    return upright_g * height_g * gate
+    r = upright_g * height_g * gate
+    if wall_name is not None:
+        r = r * _past_wall_mask(env, asset, wall_name)
+    return r
 
 
 def roulade_stand_tax(
@@ -7086,18 +7209,28 @@ def roulade_stand_tax(
     target_height: float,
     gate_lo: float = math.radians(260.0),
     gate_hi: float = math.radians(330.0),
+    ramp_steps: float = 75.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     """SELF-NEGATING height L1 below target, active only after roll completion.
 
-    Returns −max(0, target − z) × completion_gate — use a POSITIVE weight
-    (penalty sign convention). The run-3 fix for post-roll crumple-camping:
+    Returns −max(0, target − z) × completion_gate × rise-ramp — use a POSITIVE
+    weight (penalty sign convention). The run-3 fix for post-roll crumple-camping:
     the gated landing rewards made standing better than lying in a heap, but
     the heap itself was FREE — with only positive gated terms, "stay crumpled"
     collects ≈0/step, a comfortable basin (the standup static-sit lesson:
     the basin must be net NEGATIVE to force the rise). The gate keeps the
     roll itself untaxed, and requires the head latch so a no-roll episode
     can't be punished into weird avoidance behaviors.
+
+    Run-6 rise ramp: the shortfall is multiplied by a 0→1 ramp over
+    ``ramp_steps`` after the env's frontier first crossed _RISE_OPEN_REF
+    (late midroll spawns start the clock at birth). A slow crunch-up only
+    pays the shallow early ramp, while PARKING in the fold makes the basin
+    progressively more negative — the deterministic-policy frozen-fold
+    attractor seen in run-5 play rollouts becomes strictly unprofitable,
+    without taxing the launch itself (the ramp prices TIME below target,
+    not the violence of leaving it).
     """
     asset: Entity = env.scene[asset_cfg.name]
     _update_roulade_accum(env, asset)
@@ -7105,7 +7238,13 @@ def roulade_stand_tax(
         asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
     )
     shortfall = torch.clamp(target_height - z, min=0.0)
-    return -shortfall * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+    gate = _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+    open_dt = torch.clamp(
+        (float(env.common_step_counter) - env._roulade_open_step) / max(ramp_steps, 1.0),
+        0.0,
+        1.0,
+    )
+    return -shortfall * gate * open_dt
 
 
 def roulade_rise_velocity(
@@ -7131,6 +7270,270 @@ def roulade_rise_velocity(
     vz = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 2], nan=0.0)
     reward = torch.clamp(vz, min=0.0) * (z < max_height).float()
     return reward * _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+
+
+def roulade_preroll_kick(
+    env: ManagerBasedRlEnv,
+    gate_lo: float = math.radians(20.0),
+    gate_hi: float = math.radians(150.0),
+    max_rate: float = 3.0,
+    fold_share: float = 0.6,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
+) -> torch.Tensor:
+    """Pre-roll prep shaping: fold (head to floor) + supported pitch kick.
+
+    Phase-B14 (2026-10-19): probe showed the frontier freezing at ~0.5π —
+    after the belly-flop the duck lies prone with ZERO gradient until 150°
+    (rise gate) / 180° (airborne, stand_tax): the entire "趴下→起翻" prep
+    is a reward dead zone, so it never learns to tuck and push. This term
+    fills the vacuum, active only in accum ∈ (gate_lo, gate_hi):
+
+      • fold  (fold_share): head-contact annuity — tucking the head down
+        against the floor is the geometric precondition for rolling over
+        it (same contact the head latch wants, paid while working toward
+        it instead of only after);
+      • kick  (1 − fold_share): supported forward pitch RATE — pays the
+        effort of initiating rotation from the prone fold, complementing
+        progress (which only pays frontier INCREMENTS — useless when the
+        rate is zero and the frontier never moves).
+
+    Not farmable: past-wall gated (same spec as every roll payoff — 墙后
+    才给分), window closes at gate_hi so post-roll standing can't collect,
+    and camping pays only the (small) fold annuity while stand_tax bleeds.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_roulade_accum(env, asset)
+    in_window = (env._roulade_accum > gate_lo) & (env._roulade_accum < gate_hi)
+    omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
+    supported = _sensor_any_contact(env, _ROULADE_SUPPORT_SENSOR)
+    if supported is not None:
+        omega_fwd = omega_fwd * supported.float()
+    kick = torch.clamp(omega_fwd, min=0.0, max=max_rate) / max_rate
+    head_contact = _sensor_any_contact(env, _ROULADE_HEAD_SENSOR)
+    fold = head_contact.float() if head_contact is not None else torch.zeros(
+        env.num_envs, device=env.device
+    )
+    r = in_window.float() * ((fold_share * fold) + (1.0 - fold_share) * kick)
+    if wall_name is not None:
+        r = r * _past_wall_mask(env, asset, wall_name)
+    return r
+
+
+def roulade_overhead_drive(
+    env: ManagerBasedRlEnv,
+    gate_lo: float = math.radians(180.0),
+    gate_hi: float = math.radians(240.0),
+    rate_norm: float = 3.0,
+    sensor_name: str = "robot_ground_contact",
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    wall_name: str | None = None,
+) -> torch.Tensor:
+    """Phase-B18 (2026-10-21): keep DRIVING the roll through the top.
+
+    Static physics sweep (logs/static_roll_sweep.csv) says the 210° window
+    (belly-down, face at the floor) is the HARDEST part of the roll: the
+    body must keep actively pushing forward through it, or it stalls in the
+    180-220° supine potential well. B13-B17 frontiers froze at 90-140° and
+    never even reached here; B18's midroll spawns seed this window, and this
+    term pays for the effort progress can't price (progress only pays
+    frontier INCREMENTS — a stalled robot earns nothing per step, so there
+    is no gradient telling it to keep rotating through the well).
+
+    reward = window(accum) × supported × clamp(ω_fwd/rate_norm, 0, 1)
+
+    Not farmable by camping (rate must stay positive), not farmable in the
+    air (contact-gated — same support gate as the accumulator), zero before
+    180° and past 240° so it can't subsidize the pounce or post-roll rise.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_roulade_accum(env, asset)
+    in_window = (env._roulade_accum > gate_lo) & (env._roulade_accum < gate_hi)
+    omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
+    rate = torch.clamp(torch.nan_to_num(omega_fwd, nan=0.0) / rate_norm, 0.0, 1.0)
+    supported = _sensor_any_contact(env, sensor_name)
+    if supported is not None:
+        rate = rate * supported.float()
+    r = in_window.float() * rate
+    if wall_name is not None:
+        r = r * _past_wall_mask(env, asset, wall_name)
+    return r
+
+
+def roulade_airborne(
+    env: ManagerBasedRlEnv,
+    max_height: float = 0.115,
+    gate_lo: float = math.radians(260.0),
+    gate_hi: float = math.radians(360.0),
+    sensor_name: str = "feet_ground_contact",
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Quality-weighted 腾空 (flight) credit for the kip-up launch.
+
+    The '打挺' snap leaves the feet; run-5's rise was a slow crunch (measured
+    rise vz ~0.35 m/s) partly because nothing paid for flight, and a bare
+    airborne indicator (run-6a) gave no gradient toward a HIGHER, more
+    explosive launch. This term pays  clamp(vz, 0, +) × clamp(z, 0, max_height)
+    per airborne step — upward velocity AND apex height both count — but ONLY
+    in the post-roll window (frontier ≥ gate_lo, head-latched, same completion
+    gate as the landing family) and only below ``max_height`` (≈ standing
+    height), so hopping once upright earns nothing and it cannot be farmed.
+    The roll itself stays support-gated — airborne rotation before the gate
+    still earns nothing (run-1 ballistic-whip lesson); this credits the
+    LAUNCH, not a bounce-based roll.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_roulade_accum(env, asset)
+    if sensor_name not in env.scene.sensors:
+        return torch.zeros(env.num_envs, device=env.device)
+    found = env.scene.sensors[sensor_name].data.found
+    feet_contact = (found.view(found.shape[0], -1) > 0).any(dim=-1)
+    airborne = ~feet_contact
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    vz = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 2], nan=0.0)
+    gate = _roulade_completion_gate(env, gate_lo, gate_hi, require_head=True)
+    quality = torch.clamp(vz, min=0.0) * torch.clamp(z, min=0.0, max=max_height)
+    return airborne.float() * quality * gate * (z < max_height).float()
+
+
+def roulade_dive_launch(
+    env: ManagerBasedRlEnv,
+    vx_lo: float = 0.1,
+    vx_hi: float = 0.4,
+    omega_ref: float = 2.0,
+    max_height: float = 0.13,
+    frontier_max: float = math.radians(90.0),
+    sensor_name: str = "feet_ground_contact",
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Dive-entry credit for the dive-roll: pay the AIRBORNE launch phase at the
+    START of the maneuver (before the supported roll begins).
+
+    reward = airborne × clamp01(vx in [vx_lo, vx_hi]) × clamp(ω_fwd/omega_ref, 0, 1)
+    × (z < max_height), gated to frontier < frontier_max (the first ~90°).
+
+    Design constraints (AGENTS.md lessons):
+    - The roll itself stays support-gated in the accumulator (run-1 ballistic
+      lesson) — this term pays ONLY the launch, never airborne rotation past
+      frontier_max, so a whip earns nothing here.
+    - vx gate: a static hop earns nothing; the dive must carry forward speed
+      (from the élan spawn velocity or a self-generated lunge).
+    - omega gate: pays more when the launch already carries forward pitch rate
+      (tucked dive entry), zero for a pure vertical pop.
+    - z cap: hopping upright earns nothing (z crosses max_height on a real hop).
+    - Rate-limited by construction: airborne steps before 90° are few, so this
+      is a bounded entry bonus, not a jackpot.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_roulade_accum(env, asset)
+    _, frontier, _ = _roulade_state(env)
+    if sensor_name not in env.scene.sensors:
+        return torch.zeros(env.num_envs, device=env.device)
+    found = env.scene.sensors[sensor_name].data.found
+    feet_contact = (found.view(found.shape[0], -1) > 0).any(dim=-1)
+    airborne = ~feet_contact
+    vx = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 0], nan=0.0)
+    vx_gain = torch.clamp((vx - vx_lo) / (vx_hi - vx_lo), 0.0, 1.0)
+    omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
+    omega_gain = torch.clamp(torch.nan_to_num(omega_fwd, nan=0.0) / omega_ref, 0.0, 1.0)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    early = (frontier < frontier_max).float()
+    return airborne.float() * vx_gain * omega_gain * (z < max_height).float() * early
+
+
+def roulade_dive_launch_v2(
+    env: ManagerBasedRlEnv,
+    vx_lo: float = 0.4,
+    vx_hi: float = 1.25,
+    stand_z: float = 0.115,
+    height_ref: float = 0.05,
+    frontier_max: float = math.radians(90.0),
+    sensor_name: str = "feet_ground_contact",
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Run-4 dive-entry credit: pay EXPLICIT flight — airborne HEIGHT GAIN above
+    standing height + airborne DURATION — in the pre-roll window (<90°).
+
+    reward = airborne × clamp01(vx in [vx_lo, vx_hi])
+             × (0.4 + 0.6 × clamp01((z − stand_z)/height_ref))
+    gated to frontier < frontier_max.
+
+    Differences vs roulade_dive_launch (run-3, which capped z BELOW standing
+    height and multiplied by an omega gate — paying "not too high, tumbling
+    a bit", never real flight):
+    - Height is now PAID, not capped: the base must rise above stand_z for the
+      full credit; a grounded lunge still gets the 0.4 base component per
+      airborne step, a true leap gets 1.0.
+    - Airborne duration pays implicitly: every airborne step before 90° earns
+      the term, so longer flight = more credit (bounded by the frontier gate,
+      which closes once the roll proper starts).
+    - omega factor dropped: the vx gate (widened to 0.4–1.25 m/s to cover the
+      1.2 m/s trigger regime in-distribution) already enforces forward intent;
+      omega × height was a 4-factor product that mostly sat at ~0 (run-1
+      sparse-jackpot lesson).
+    Bounded: per-step max 1.0, and airborne steps before 90° are few, so with
+    weight 6.0 the term stays well under the ~10-magnitude task rewards.
+    NaN-safe: all inputs pass through nan_to_num; missing sensor → zeros.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_roulade_accum(env, asset)
+    _, frontier, _ = _roulade_state(env)
+    if sensor_name not in env.scene.sensors:
+        return torch.zeros(env.num_envs, device=env.device)
+    found = env.scene.sensors[sensor_name].data.found
+    feet_contact = (found.view(found.shape[0], -1) > 0).any(dim=-1)
+    airborne = (~feet_contact).float()
+    vx = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 0], nan=0.0)
+    vx_gain = torch.clamp((vx - vx_lo) / (vx_hi - vx_lo), 0.0, 1.0)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    height_gain = torch.clamp((z - stand_z) / height_ref, 0.0, 1.0)
+    early = (frontier < frontier_max).float()
+    return airborne * vx_gain * (0.4 + 0.6 * height_gain) * early
+
+
+def roulade_dive_approach(
+    env: ManagerBasedRlEnv,
+    vx_lo: float = 0.1,
+    vx_hi: float = 0.5,
+    omega_ref: float = 3.0,
+    vz_ref: float = 0.3,
+    frontier_max: float = math.radians(90.0),
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Dense dive-entry shaping (run-2): pay forward speed + forward pitch rate
+    + upward vz CONTINUOUSLY during the pre-roll window (frontier < 90°),
+    regardless of contact.
+
+    Run-1 lesson: roulade_dive_launch is a 4-factor product gated on airborne —
+    the warm-start policy essentially never enters that state, so the term sat
+    at ~0.0005 for 6000 iterations (undiscoverable sparse jackpot, same failure
+    mode as roulade_airborne in run-6). This companion term keeps the gradient
+    dense: every step of the approach pays for more élan, more forward pitch
+    rate, and more upward CoM velocity. The airborne product term stays as the
+    bonus; this term is the ramp toward it.
+
+    Bounded by construction: the window closes at frontier_max (the roll
+    proper stays governed by the support-gated accumulator), and each factor
+    is clamp01, so the max per-step value is 1.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_roulade_accum(env, asset)
+    _, frontier, _ = _roulade_state(env)
+    early = (frontier < frontier_max).float()
+    vx = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 0], nan=0.0)
+    vx_gain = torch.clamp((vx - vx_lo) / (vx_hi - vx_lo), 0.0, 1.0)
+    omega_fwd = _ROULADE_FWD_SIGN * asset.data.root_link_ang_vel_b[:, 1]
+    omega_gain = torch.clamp(torch.nan_to_num(omega_fwd, nan=0.0) / omega_ref, 0.0, 1.0)
+    vz_gain = torch.clamp(
+        torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 2], nan=0.0) / vz_ref, 0.0, 1.0
+    )
+    return early * (0.5 * vx_gain + 0.3 * omega_gain + 0.2 * vz_gain)
 
 
 def roulade_overspeed_penalty(
@@ -7171,12 +7574,23 @@ def roulade_flatness_penalty(
 def roulade_sagittal_penalty(
     env: ManagerBasedRlEnv,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    upright_exempt_deg: float = 0.0,
 ) -> torch.Tensor:
     """Rotation out of the sagittal plane: body-frame ω_x² + ω_z² (positive;
-    use a negative weight). ω_y is the roll axis and stays free."""
+    use a negative weight). ω_y is the roll axis and stays free.
+    upright_exempt_deg > 0 (stage-4 v3.1, user 2026-10-11): zero the penalty
+    while |pitch| < threshold — this term exists to keep the ROLL planar;
+    an upright RUNNING gait wobbles in ω_x/ω_z every step and was being
+    taxed for it (biggest negative term, -0.045/ep, while track stalled)."""
     asset: Entity = env.scene[asset_cfg.name]
     omega_b = asset.data.root_link_ang_vel_b
-    return torch.nan_to_num(omega_b[:, 0].pow(2) + omega_b[:, 2].pow(2), nan=0.0)
+    out = torch.nan_to_num(omega_b[:, 0].pow(2) + omega_b[:, 2].pow(2), nan=0.0)
+    if upright_exempt_deg > 0.0:
+        quat = asset.data.root_link_quat_w
+        qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+        pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
+        out = out * (pitch >= math.radians(upright_exempt_deg)).float()
+    return out
 
 
 def roulade_lateral_velocity_penalty(
@@ -7186,3 +7600,1253 @@ def roulade_lateral_velocity_penalty(
     """Body-frame lateral (y) linear velocity² — keeps the roll straight."""
     asset: Entity = env.scene[asset_cfg.name]
     return torch.nan_to_num(asset.data.root_link_lin_vel_b[:, 1].pow(2), nan=0.0)
+
+
+def track_linear_velocity_highspeed(
+    env: ManagerBasedRlEnv,
+    std: float,
+    command_name: str,
+    gate: float = 0.5,
+    asset_cfg: SceneEntityCfg = None,
+) -> torch.Tensor:
+    """Extra tracking reward paid ONLY when |commanded vx| >= gate.
+
+    Mirrors mjlab's track_linear_velocity (xy error + z penalty, exp kernel)
+    but gated on high-speed commands, so the policy cannot earn the bonus by
+    standing still. NaN-safe. Used by the velocity_fast run2 experiment.
+    """
+    if asset_cfg is None:
+        from mjlab.tasks.velocity.mdp.rewards import _DEFAULT_ASSET_CFG as asset_cfg
+    asset: Entity = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    assert command is not None, f"Command '{command_name}' not found."
+    command = torch.nan_to_num(command, nan=0.0)
+    actual = torch.nan_to_num(asset.data.root_link_lin_vel_b, nan=0.0)
+    xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
+    z_error = torch.square(actual[:, 2])
+    reward = torch.exp(-(xy_error + z_error) / std**2)
+    gate_mask = (command[:, 0].abs() >= gate).float()
+    return reward * gate_mask
+
+
+def lin_vel_x_range_curriculum(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+    command_name: str,
+    range_stages: list[dict],
+) -> torch.Tensor:
+    """Step-staged widening of the twist command's lin_vel_x range.
+
+    Mutates the live command term cfg (same pattern as
+    standing_envs_curriculum). ``range_stages``: [{"step": int,
+    "lin_vel_x": (lo, hi)}, ...].
+    """
+    del env_ids
+    command_term = env.command_manager.get_term(command_name)
+    assert command_term is not None, f"Command term '{command_name}' not found"
+    cfg = command_term.cfg
+    for stage in range_stages:
+        if env.common_step_counter > stage["step"]:
+            cfg.ranges.lin_vel_x = tuple(stage["lin_vel_x"])
+    return torch.tensor([cfg.ranges.lin_vel_x[1]])
+
+
+# ── Dive-wall (obstacle-forced dive) ─────────────────────────────────────────
+
+def postdive_spawn(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+    prob: float = 0.25,
+    pitch_min_deg: float = 120.0,
+    pitch_max_deg: float = 200.0,
+    z_min: float = 0.05,
+    z_max: float = 0.10,
+    past_dist_range: tuple = (0.10, 0.35),
+    omega_range: tuple = (0.0, 2.0),
+    tuck_overrides: Optional[dict] = None,
+    tuck_factor_range: tuple = (0.3, 1.0),
+    joint_noise_std: float = 0.08,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+):
+    """Stage-4 v2 (user 2026-10-09): post-dive reverse-curriculum spawn.
+
+    A fraction of envs respawn PAST the wall plane in a mid-dive-fall state:
+    pitched forward (pitch 120-200°, i.e. face-down through on-the-back),
+    z low, legs tucked, residual forward angular momentum — exactly the state
+    distribution a pounce-over-the-wall landing produces. This seeds the
+    roll-completion half with on-policy data (the StandUp/Roulade mid-roll
+    trick, applied to the wall flow) WITHOUT touching reward shapes: the
+    potential-based accumulator only pays for NEW rotation past the spawn
+    angle, and the past-the-wall roll gates are satisfied at birth.
+
+    Must run AFTER reset_wall_ahead (dict insertion order): the wall planted
+    pose (env._wall_spawn_pose) defines "past the wall". Envs without spawn
+    bookkeeping (older runs) are skipped entirely.
+    """
+    if env_ids is None or len(env_ids) == 0:
+        return
+    if not hasattr(env, "_wall_spawn_pose"):
+        return
+    env_ids = env_ids.to(env.device, dtype=torch.long)
+    mask = torch.rand(len(env_ids), device=env.device) < prob
+    ids = env_ids[mask]
+    if len(ids) == 0:
+        return
+    num = len(ids)
+    asset: Entity = env.scene[asset_cfg.name]
+    accum, max_accum, paid = _roulade_state(env)
+
+    # Wall planted pose → heading yaw + spawn point past the wall plane.
+    wall_pose = env._wall_spawn_pose[ids]
+    yaw = torch.atan2(
+        2.0 * (wall_pose[:, 3] * wall_pose[:, 6]),
+        1.0 - 2.0 * (wall_pose[:, 6] ** 2),
+    )
+    cy, sy = torch.cos(yaw), torch.sin(yaw)
+    past = (
+        torch.rand(num, device=env.device) * (past_dist_range[1] - past_dist_range[0])
+        + past_dist_range[0]
+    )
+
+    # Mid-dive pitch (ZYX: yaw * pitch, roll 0).
+    pitch = (
+        torch.rand(num, device=env.device)
+        * (math.radians(pitch_max_deg) - math.radians(pitch_min_deg))
+        + math.radians(pitch_min_deg)
+    )
+    cp, sp = torch.cos(pitch * 0.5), torch.sin(pitch * 0.5)
+    cyh, syh = torch.cos(yaw * 0.5), torch.sin(yaw * 0.5)
+    quat = torch.stack(
+        [cyh * cp, -syh * sp, cyh * sp, syh * cp], dim=1
+    )
+
+    qadr = int(asset.indexing.free_joint_q_adr[0])  # scalar start of the free-joint block
+    env.sim.data.qpos[ids, qadr + 0] = wall_pose[:, 0] + cy * past
+    env.sim.data.qpos[ids, qadr + 1] = wall_pose[:, 1] + sy * past
+    env.sim.data.qpos[ids, qadr + 2] = (
+        torch.rand(num, device=env.device) * (z_max - z_min) + z_min
+    )
+    env.sim.data.qpos[ids, qadr + 3:qadr + 7] = quat
+    env.sim.data.qvel[ids, :6] = 0.0
+
+    # Tuck + noise on servo joints (same treatment as mid-roll bucket).
+    servo_ids = _servo_joint_ids(env, asset)
+    if tuck_overrides:
+        u = (
+            torch.rand(num, device=env.device)
+            * (tuck_factor_range[1] - tuck_factor_range[0])
+            + tuck_factor_range[0]
+        )
+        for jnt_idx, angle in tuck_overrides.items():
+            col = 7 + servo_ids[jnt_idx]
+            home = env.sim.data.qpos[ids, col]
+            env.sim.data.qpos[ids, col] = home + u * (angle - home)
+    if joint_noise_std > 0.0:
+        cols = torch.tensor([7 + j for j in servo_ids], device=env.device, dtype=torch.long)
+        noise = torch.randn(num, len(cols), device=env.device) * joint_noise_std
+        env.sim.data.qpos[ids.unsqueeze(1), cols.unsqueeze(0)] += noise
+
+    # Residual forward angular momentum (body +y, same as mid-roll spawns).
+    if omega_range[1] > 0.0:
+        omega = (
+            torch.rand(num, device=env.device)
+            * (omega_range[1] - omega_range[0])
+            + omega_range[0]
+        )
+        env.sim.data.qvel[ids, qadr + 4] = _ROULADE_FWD_SIGN * omega
+
+    # Progress accounting mirrors the mid-roll bucket: born at spawn pitch,
+    # only NEW rotation is paid; head latch pre-earned.
+    accum[ids] = pitch
+    max_accum[ids] = pitch
+    paid[ids] = pitch
+    env._roulade_open_step[ids] = torch.where(
+        pitch >= _RISE_OPEN_REF,
+        torch.full_like(pitch, float(env.common_step_counter)),
+        torch.full_like(pitch, _ROULADE_OPEN_NEVER),
+    )
+    env._roulade_head_latch[ids] = True
+
+
+def reset_wall_ahead(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+    distance_range: tuple = (0.22, 0.30),
+    lateral_noise: float = 0.02,
+    wall_sink: float = 0.0,
+    asset_name: str = "wall",
+):
+    """Place the hurdle dead ahead of the robot's spawn yaw (wall variant).
+
+    Same pattern as reset_ball_in_front_of_foot: read the finalized robot root
+    from qpos, offset forward along its yaw by ``distance_range`` (uniform),
+    align the wall's long axis perpendicular to the heading, zero velocity.
+    Must run AFTER set_roulade_state (dict insertion order).
+    """
+    if env_ids is None or len(env_ids) == 0:
+        return
+    env_ids = env_ids.to(env.device)
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+
+    root = env.sim.data.qpos[env_ids][:, robot.indexing.free_joint_q_adr]
+    qw, qx, qy, qz = root[:, 3], root[:, 4], root[:, 5], root[:, 6]
+    yaw = torch.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+    cos_y, sin_y = torch.cos(yaw), torch.sin(yaw)
+
+    n = len(env_ids)
+    dist = (
+        torch.rand(n, device=env.device) * (distance_range[1] - distance_range[0])
+        + distance_range[0]
+    )
+    lat = (torch.rand(n, device=env.device) * 2.0 - 1.0) * lateral_noise
+
+    pose = torch.zeros(n, 7, device=env.device)
+    pose[:, 0] = root[:, 0] + cos_y * dist - sin_y * lat
+    pose[:, 1] = root[:, 1] + sin_y * dist + cos_y * lat
+    pose[:, 2] = env.scene.terrain.env_origins[env_ids, 2] + 0.06 - wall_sink / 2.0
+    # ^ 2026-10-17 fix: get_wall_spec now shrinks the geom (H = 0.12 - sink),
+    # so the correct rest height is half-height = 0.06 - sink/2 (NOT the old
+    # 0.06 - sink, which buried the box and let ground contact eject it back
+    # to the full 12cm — see scripts/wall_z_probe.py).
+    # ^ Bug fix (run-8c): was 0.03, placing the 6cm-half-height wall at
+    # z∈[-0.03,0.09] — a 9cm wall instead of the intended 12cm (wall.xml
+    # places the body at z=0.06). 9cm was steppable: the policy climbed the
+    # wall like a stair without displacing it (probe 2026-10-02).
+    # wall_sink (stage-2e curriculum 2026-10-05): sink the wall into the
+    # ground — effective height = 12cm - wall_sink. Duck never took off at
+    # 12cm in 16k iters (push/takeoff mutual exclusion); lower it until the
+    # flight jackpot is reachable by accident, then raise it back.
+    # Yaw-only quaternion (w, 0, 0, z)
+    pose[:, 3] = torch.cos(yaw * 0.5)
+    pose[:, 6] = torch.sin(yaw * 0.5)
+    wall.write_root_link_pose_to_sim(pose, env_ids)
+    wall.write_root_link_velocity_to_sim(
+        torch.zeros(n, 6, device=env.device), env_ids
+    )
+    # Per-episode flight-clear latch (see wall_flight_clear_bonus).
+    if hasattr(env, "_wall_flight_paid"):
+        env._wall_flight_paid[env_ids] = False
+    # Run-8b: remember the planted pose — shove detection / planted gating.
+    if not hasattr(env, "_wall_spawn_pose"):
+        env._wall_spawn_pose = torch.zeros(
+            env.num_envs, 7, device=env.device
+        )
+    env._wall_spawn_pose[env_ids] = pose
+    # Phase-A v3 (2026-10-14): 记住出生朝向 — heading_hold 奖励的锚点。
+    if not hasattr(env, "_spawn_yaw"):
+        env._spawn_yaw = torch.zeros(env.num_envs, device=env.device)
+    env._spawn_yaw[env_ids] = yaw
+
+
+def heading_hold_reward(
+    env: ManagerBasedRlEnv,
+    std_deg: float = 15.0,
+) -> torch.Tensor:
+    """Phase-A v3 (user 2026-10-14 12:10 GIF verdict: 转头远离墙体).
+
+    track_angular_velocity 只罚 yaw 角速度 — 鸭子可以慢慢转头、ω_z 始终
+    接近 0 地漂走航向。本项直接锚定航向角：偏离出生朝向(=朝墙) 按
+    gaussian 罚。锚点由 reset_wall_ahead 存入 env._spawn_yaw。
+    """
+    robot: Entity = env.scene["robot"]
+    rpos = robot.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    anchor = getattr(env, "_spawn_yaw", None)
+    if anchor is None:
+        return torch.ones(env.num_envs, device=env.device)
+    err = torch.atan2(torch.sin(yaw - anchor), torch.cos(yaw - anchor))
+    return torch.exp(-torch.square(err) / math.radians(std_deg) ** 2)
+
+
+def _wall_displaced(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    xy_thresh: float = 0.015,
+    tilt_thresh_deg: float = 15.0,
+) -> torch.Tensor:
+    """Run-8b helper: True where the wall has been MOVED or TILTED from its
+    planted pose (stored by reset_wall_ahead). Missing spawn bookkeeping ->
+    all False (gates open, run<=8 behavior)."""
+    if not hasattr(env, "_wall_spawn_pose"):
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    wall: Entity = env.scene[asset_name]
+    wpos = wall.data.root_link_pose_w
+    moved = (torch.nan_to_num(wpos[:, :2] - env._wall_spawn_pose[:, :2]))
+    xy = moved.norm(dim=1) > xy_thresh
+    # Tilt via the wall's UP vector (yaw-invariant). Bug fix (run-8b): the
+    # first version used qw*qw0 < cos(half-angle), but qw = cos(yaw/2) for
+    # the yaw-only spawn quat — spawns facing ~180° have qw≈0 and were
+    # flagged "tilted" from step 0, permanently opening the shove penalty
+    # and closing the flight gate for those envs.
+    q = wpos[:, 3:7]
+    up = 1.0 - 2.0 * (q[:, 1] ** 2 + q[:, 2] ** 2)
+    tilted = up < math.cos(math.radians(tilt_thresh_deg))
+    return xy | tilted
+
+
+def wall_lateral_termination(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    max_lat: float = 1.2,
+    near_dist: float = -1.0,
+) -> torch.Tensor:
+    """Run-9: terminate when the robot strays too far laterally from the
+    wall centerline (robot-frame left offset, same lat as wall_critic_obs).
+
+    Probe 2026-10-02 (run-8c): 7/16 envs simply walked AROUND the 1.6 m
+    wall on the infinite plane (crossed the wall plane at z≈0.05 with the
+    wall untouched). The wall is widened to 3 m and this termination makes
+    rounding it cost the rest of the episode — the only remaining path to
+    the far side is over it.
+    """
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w
+    wpos = wall.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    left = torch.stack((-fwd[:, 1], fwd[:, 0]), dim=1)
+    lat = ((rpos[:, :2] - wpos[:, :2]) * left).sum(dim=1)
+    fired = lat.abs() > max_lat
+    if near_dist > 0.0:
+        # Stage-4 v3.3 (user 2026-10-11 probe): 86% of episodes died to this
+        # term within ~1s while the warm policy was still re-learning to run
+        # (drift >1.2m before any track credit). Anti-circumvention only needs
+        # to guard the WALL CROSSING — gate to |along-track dist| < near_dist
+        # so the runway is free like stages 1-3 (which pop this term entirely).
+        dist = ((rpos[:, :2] - wpos[:, :2]) * fwd).sum(dim=1)
+        fired = fired & (dist.abs() < near_dist)
+    return fired
+
+
+def wall_runup_shaping(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    zone_near: float = 0.30,
+    vx_lo: float = 0.4,
+    vx_full: float = 0.9,
+    lean_full_deg: float = 30.0,
+    lean_max_deg: float = 35.0,
+    lean_peak_deg: float = 0.0,
+    lean_zero_deg: float = 30.0,
+    z_min: float = 0.0,
+    feet_sensor: str = "feet_ground_contact",
+) -> torch.Tensor:
+    """Run-10: LEANING RUN-UP credit between spawn and the dive zone.
+
+    reward = in_runway(dist > zone_near) × feet_ON_ground
+             × clamp01((vx − vx_lo)/(vx_full − vx_lo))
+             × (0.4 + 0.6 × ramp01(|pitch| 0→lean_full_deg))
+
+    Decomposition goal (user 2026-10-02): 跑 → 前倾着跑 → 跳(前扑) → … —
+    runs 1-9 spawned 2 body-lengths from the wall, so the policy flopped
+    straight into the roll. Run-10 spawns 0.85-1.2 m out; this term pays
+    each grounded step that HOLDS forward speed with a slight forward lean
+    (upright-but-leaning, NOT pitched into the dive — the dive pitch belongs
+    to the takeoff zone). Bounded ≤1/step, NaN-safe.
+    """
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w
+    vel = torch.nan_to_num(robot.data.root_link_vel_w)
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    # dist is SIGNED along the heading: negative while approaching the wall.
+    # The runway is everything more than zone_near BEFORE the wall plane
+    # (bug fix 2026-10-02: first version used dist > zone_near — the wrong
+    # side, paid zero at spawn for 1000 iters).
+    in_runway = dist < -zone_near
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    feet_on = (
+        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+
+    vx = (vel[:, :2] * fwd).sum(dim=1)
+    vx_ramp = torch.clamp((vx - vx_lo) / max(vx_full - vx_lo, 1e-6), 0.0, 1.0)
+    quat = robot.data.root_link_quat_w
+    qw2, qx, qy, qz2 = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    pitch = torch.asin(
+        torch.clamp(2.0 * (qw2 * qy - qz2 * qx), -1.0, 1.0)
+    ).abs()
+    lean_ramp = torch.clamp(pitch / math.radians(lean_full_deg), 0.0, 1.0)
+    # Run-15 stage-1 lesson: lean_ramp SATURATES at lean_full and never decays
+    # — the duck farmed the term by FLOPPING forward onto its head at 40°+
+    # (user GIF 2026-10-04: 没有跑起来直接扑倒). Hard ceiling: past
+    # lean_max_deg the runway credit cuts to zero (that posture is the DIVE,
+    # and the premature-roll penalty owns it), and lean is only a 30% bonus
+    # now — the vx ramp is the business.
+    lean_ok = (pitch < math.radians(lean_max_deg)).float()
+    if lean_peak_deg > 0.0:
+        # Run school v3 (2026-10-06 GIF verdict: 趴着跑步): the old
+        # 0→30° ramp paid MAXIMUM lean credit at exactly the prone-running
+        # pitch — the duck obeyed the formula. v4 (user 2026-10-07 稍微倾斜
+        # 的跑步有利于加速): PLATEAU bonus — full credit for upright through
+        # a natural sprint lean (0..lean_peak_deg), then decays linearly to
+        # zero at lean_zero_deg. Slight lean is allowed-and-equal, prone
+        # running pays like standing still.
+        p_pk, p_z = math.radians(lean_peak_deg), math.radians(lean_zero_deg)
+        lean_bonus = torch.clamp(
+            1.0 - torch.clamp(pitch - p_pk, min=0.0) / max(p_z - p_pk, 1e-6),
+            0.0, 1.0,
+        )
+        # v6 (2026-10-07): z_min height gate — a crouched/collapsed trunk
+        # (v5 probe: z 0.035 belly-flat, pitch 13°) earns NOTHING here; the
+        # credit is for running TALL. Standing is ~0.146.
+        tall = (torch.nan_to_num(robot.data.root_link_pose_w[:, 2], nan=0.0)
+                >= z_min).float() if z_min > 0.0 else 1.0
+        return (
+            in_runway.float() * feet_on.float() * vx_ramp * tall
+            * lean_ok * (0.5 + 0.5 * lean_bonus)
+        )
+    return (
+        in_runway.float() * feet_on.float() * vx_ramp
+        * lean_ok * (0.7 + 0.3 * lean_ramp)
+    )
+
+
+def wall_shove_penalty(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    xy_thresh: float = 0.015,
+    tilt_thresh_deg: float = 15.0,
+) -> torch.Tensor:
+    """Run-8b: FLAT per-step penalty while the wall is displaced/tilted.
+
+    Run-8 probe finding: 8/12 envs "crossed" at z=0.046-0.065 — the duck
+    SHOVES the 2 kg free-joint wall out of the way and walks through the
+    vacated plane (one env even knocked it flat, wall_up 0.0). The collision
+    penalty prices contact but not the resulting displacement, so shoving
+    remained the cheapest "crossing". This term prices the shove itself:
+    every step the wall is out of its planted pose costs 1.0 (bumped
+    through). Pair with planted-gating on the cleared/flight bonuses.
+    """
+    return _wall_displaced(env, asset_name, xy_thresh, tilt_thresh_deg).float()
+
+
+def airborne_spin_credit(
+    env: ManagerBasedRlEnv,
+    omega_scale: float = 3.0,
+    asset_name: str = "robot",
+    feet_sensor: str = "feet_ground_contact",
+    pitch_min_deg: float = 0.0,
+    vx_gate: float = 0.0,
+) -> torch.Tensor:
+    """Stage-3 v2 (user 2026-10-07): roll PREVIEW — pay forward pitch-rate
+    while airborne, so Stage-4 doesn't have to teach spin+wall+roll at once.
+
+    Roulade-run-1 lesson baked in: the paid rate CAPS at omega_scale (3 rad/s,
+    a controlled roll's average) — faster spinning earns nothing extra, so
+    "violent" is not-better rather than better. Bounded ≤1/step, NaN-safe.
+
+    v7d (user 2026-10-08 verdict "前扑效果一般"): the stage-3 v7c run found a
+    shortcut — tiny upright hops with fast pitch wobble farmed the spin term
+    (0.88/2.0) while hop_forward died (0.0008). Gate the spin credit on the
+    DIVE posture itself: pitch_ramp(pitch_min→60°) × soft vx gate — only a
+    pitched-forward, moving airborne body earns spin credit.
+    """
+    robot: Entity = env.scene[asset_name]
+    omega_y = torch.nan_to_num(robot.data.root_link_ang_vel_b[:, 1], nan=0.0)
+    vel = torch.nan_to_num(robot.data.root_link_vel_w)
+    quat = robot.data.root_link_quat_w
+    qw, qy = quat[:, 0], quat[:, 2]
+    qz = quat[:, 3]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    vx = (vel[:, :2] * fwd).sum(dim=1).clamp(min=0.0)
+    pitch = torch.asin(
+        torch.clamp(2.0 * (qw * qy - qz * quat[:, 1]), -1.0, 1.0)
+    ).abs()
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    airborne = (
+        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    rate = (omega_y.abs() / max(omega_scale, 1e-6)).clamp(max=1.0)
+    gate = torch.ones_like(rate)
+    if pitch_min_deg > 0.0:
+        p_lo = math.radians(pitch_min_deg)
+        p_hi = math.radians(60.0)
+        gate = gate * torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
+    if vx_gate > 0.0:
+        gate = gate * torch.clamp(vx / max(vx_gate, 1e-6), max=1.0)
+    return airborne.float() * rate * gate
+
+
+def prone_termination(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "robot",
+    z_thresh: float = 0.07,
+) -> torch.Tensor:
+    """Stage-1 v6 (user 2026-10-07): end the episode the moment the trunk
+    collapses below z_thresh — lying flat for the remaining seconds is
+    wasted sample (v5 probe: 4s dead-still at z=0.035). Spawn is 0.11-0.12,
+    so the cut never fires at reset. Returns bool per env.
+    """
+    robot: Entity = env.scene[asset_name]
+    z = torch.nan_to_num(robot.data.root_link_pose_w[:, 2], nan=0.0)
+    return z < z_thresh
+
+
+def prone_fall_penalty(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "robot",
+    pitch_thresh_deg: float = 40.0,
+    z_thresh: float = 0.09,
+    exempt_airborne: bool = False,
+    feet_sensor: str = "feet_ground_contact",
+) -> torch.Tensor:
+    """Stage-1-run v6 (user 2026-10-07 21:42): prone/fallen posture tax.
+
+    v5 probe exposed the hole: the duck lies BELLY-FLAT with pitch only ~13°
+    (level body, z≈0.035 vs standing 0.146) — a pitch-only gate prices that
+    at ZERO. Now fallen = (pitch > pitch_thresh_deg) OR (trunk z below
+    z_thresh): lying down is costly in any orientation. Wall-free. 1.0/step.
+
+    v7c (user 2026-10-08): exempt_airborne=True (Stage-3) skips the penalty
+    on airborne steps — a proper dive pitches past 50° IN FLIGHT while the
+    hop pitch-ramp pays full credit; penalizing flight contradicts the
+    lesson. Grounded prone is still always priced.
+    """
+    robot: Entity = env.scene[asset_name]
+    quat = robot.data.root_link_quat_w
+    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
+    z = torch.nan_to_num(robot.data.root_link_pose_w[:, 2], nan=1.0)
+    fallen = (pitch > math.radians(pitch_thresh_deg)) | (z < z_thresh)
+    if exempt_airborne:
+        feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+        airborne = (
+            ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+            if feet_found is not None and feet_found.numel() > 0
+            else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        )
+        fallen = fallen & ~airborne
+    return fallen.float()
+
+
+def wall_premature_roll_penalty(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "robot",
+    wall_name: str = "wall",
+    near_dist: float = 0.15,
+    vx_gate: float = -1.0,
+    pitch_thresh_deg: float = 35.0,
+    feet_sensor: str = "feet_ground_contact",
+) -> torch.Tensor:
+    """Run-14b: penalize GROUNDED rolling far in front of the wall.
+
+    User spec 2026-10-04: 在墙前远处翻滚不能给 reward，甚至负向；在墙前
+    附近前扑，墙后头落地翻滚. With all roll-payoff terms past-wall-gated, a
+    pre-wall roll now earns ~0 — but ~0 is not enough of a signal when the
+    base dive_launch/airborne terms still pay ANY airborne rotation. This
+    term makes a SUPPORTED pitch-beyond-threshold body pose on the APPROACH
+    side (dist < -near_dist) actively costly, carving out a dead zone where
+    only the run-up and the near-wall pounce pay. 1.0/step while it lasts.
+    """
+    robot: Entity = env.scene[asset_name]
+    try:
+        wall: Entity = env.scene[wall_name]
+    except KeyError:
+        return torch.zeros(env.num_envs, device=env.device)
+    rpos = robot.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    far_before = dist < -near_dist
+    if vx_gate >= 0.0:
+        # Stage-4 v3 (user 2026-10-11): velocity-gated mode — instead of the
+        # distance exemption, penalize any GROUNDED pitch-beyond-threshold on
+        # the APPROACH side (dist < 0) while slower than vx_gate. Kills the
+        # zero-speed "roll right at the wall" freeroll the 15cm hole allowed.
+        vel = torch.nan_to_num(robot.data.root_link_vel_w)
+        vx = (vel[:, :2] * fwd).sum(dim=1)
+        far_before = (dist < 0.0) & (vx < vx_gate)
+
+    quat = robot.data.root_link_quat_w
+    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
+    pitched = pitch > math.radians(pitch_thresh_deg)
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    feet_on = (
+        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    return (far_before & pitched & feet_on).float()
+
+
+def wall_premature_dive_penalty(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "robot",
+    wall_name: str = "wall",
+    near_dist: float = 0.30,
+    pitch_hi_deg: float = 32.0,
+    pitch_air_deg: float = 15.0,
+    feet_sensor: str = "feet_ground_contact",
+) -> torch.Tensor:
+    """Stage-2b (user 2026-10-05): penalize diving at the wall TOO EARLY.
+
+    User spec: 扑的还是太早了，没到墙就扑. wall_premature_roll_penalty only
+    fires GROUNDED (feet_on), so an early AIRBORNE pounce — or a deep pitch
+    lunge that never leaves the ground — sails through unpenalized, then
+    slides into the 25cm push zone and still cashes in. This term closes
+    that hole: on the approach side beyond near_dist, a deep pitch lunge
+    (grounded, pitch > pitch_hi_deg — set just past the runup lean_max 35°)
+    OR an airborne body with meaningful forward pitch (pitch >
+    pitch_air_deg, sprint flight phases are upright so they stay free)
+    costs 1.0/step. Only the near-wall pounce pays.
+    """
+    robot: Entity = env.scene[asset_name]
+    try:
+        wall: Entity = env.scene[wall_name]
+    except KeyError:
+        return torch.zeros(env.num_envs, device=env.device)
+    rpos = robot.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    far_before = dist < -near_dist
+
+    quat = robot.data.root_link_quat_w
+    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    feet_on = (
+        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    airborne = ~feet_on
+    deep_lunge = (~airborne) & (pitch > math.radians(pitch_hi_deg))
+    air_pounce = airborne & (pitch > math.radians(pitch_air_deg))
+    # Stage-4 v3.1 (user 2026-10-11): raise the air-pounce line so an upright
+    # RUNNING gait's slight forward lean in flight is free — this penalty is
+    # for diving at the wall too early, not for sprinting toward it.
+    return (far_before & (deep_lunge | air_pounce)).float()
+
+
+def wall_collision_penalty(
+    env: ManagerBasedRlEnv,
+    sensor_name: str = "robot_wall_contact",
+    force_scale: float = 50.0,
+) -> torch.Tensor:
+    """Normalized robot-wall contact force — the 'don't bulldoze it' signal.
+
+    Net contact force magnitude clipped to force_scale then normalized to
+    [0, 1]; use with a NEGATIVE weight. Light grazing is cheap, ramming the
+    hurdle head-on is expensive every step it lasts.
+    """
+    sensor = env.scene.sensors[sensor_name]
+    force = sensor.data.force
+    if force is None or force.numel() == 0:
+        return torch.zeros(env.num_envs, device=env.device)
+    mag = force.flatten(start_dim=1).norm(dim=1)
+    return (mag.clamp(max=force_scale) / force_scale)
+
+
+def wall_cleared_bonus(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    robot_fwd_offset: float = 0.05,
+    min_height: float = 0.06,
+    air_cross_gate: bool = False,
+) -> torch.Tensor:
+    """Pay when the robot's trunk has passed the wall plane while above it.
+
+    One-step binary (weight sets the per-step payout): robot x-y is beyond
+    the wall center along the spawn heading AND root z is at least the wall
+    top (0.06 m). Rewards actually launching OVER the hurdle rather than
+    bulldozing through — pairs with the collision penalty.
+
+    B7 (2026-10-17): air_cross_gate=True pays the drip ONLY after the duck
+    crossed the wall plane IN FLIGHT this episode (reuses the flight-bonus
+    latch env._wall_flight_paid). Kills the belly-crawl exploit: at low
+    walls a prone trunk (~7cm) passed min_height 0.06 and farmed this term
+    while crawling (B6 probe: 6/8 crossed at z≈0.07, zero airborne steps).
+    """
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w[:, :2]
+    wpos = wall.data.root_link_pose_w[:, :2]
+    heading = robot.data.root_link_pose_w[:, 3:7]
+    qw, qz = heading[:, 0], heading[:, 3]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack(
+        (torch.cos(yaw), torch.sin(yaw)), dim=1
+    )
+    passed = ((rpos - wpos) * fwd).sum(dim=1) > robot_fwd_offset
+    high = robot.data.root_link_pose_w[:, 2] >= min_height
+    planted = ~_wall_displaced(env, asset_name)  # run-8b: shove gating
+    ok = passed & high & planted
+    if air_cross_gate:
+        latched = getattr(env, "_wall_flight_paid", None)
+        if latched is None:
+            return torch.zeros_like(ok, dtype=torch.float)  # fail closed
+        ok = ok & latched
+    return ok.float()
+
+
+def wall_contact_penalty(
+    env: ManagerBasedRlEnv,
+    sensor_name: str = "robot_wall_contact",
+) -> torch.Tensor:
+    """Run-3: FLAT per-step penalty for ANY robot-wall contact.
+
+    Run-2's force-normalized penalty made resting-on / vaulting-over the wall
+    nearly free ("light grazing is cheap") — the policy learned to roll onto
+    the wall and over instead of leaping. A flat 1-per-contact-step signal
+    prices ALL wall support equally, so the only free path is over it in
+    flight.
+    """
+    if sensor_name not in env.scene.sensors:
+        return torch.zeros(env.num_envs, device=env.device)
+    found = env.scene.sensors[sensor_name].data.found
+    if found is None or found.numel() == 0:
+        return torch.zeros(env.num_envs, device=env.device)
+    return (found.view(found.shape[0], -1) > 0).any(dim=-1).float()
+
+
+def wall_flight_clear_bonus(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    robot_fwd_offset: float = 0.05,
+    min_height: float = 0.10,
+    clearance: float = 0.02,
+    feet_sensor: str = "feet_ground_contact",
+    wall_sensor: str = "robot_wall_contact",
+    payout: float = 1.0,
+) -> torch.Tensor:
+    """Run-3: ONE-SHOT bonus for clearing the wall plane IN FLIGHT.
+
+    Triggers once per episode when, at the moment the trunk crosses the wall
+    plane: (a) no foot is on the ground, (b) no robot-wall contact (not
+    vaulting/resting on it), (c) root z is at least min_height + clearance.
+    Paid once via a per-env latch (reset by reset_wall_ahead); pair with a
+    large weight (e.g. 10) so it dominates the drip of wall_cleared_bonus.
+
+    Run-2 lesson: the per-step cleared bonus only rewarded "being past the
+    wall" (standing z 0.115 > 0.06 always true) — the crossing itself was
+    never paid, so the cheapest crossing (roll onto the wall) won.
+    """
+    if not hasattr(env, "_wall_flight_paid"):
+        env._wall_flight_paid = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w
+    wpos = wall.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    passed = ((rpos[:, :2] - wpos[:, :2]) * fwd).sum(dim=1) > robot_fwd_offset
+    z_ok = torch.nan_to_num(rpos[:, 2]) >= (min_height + clearance)
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    feet_air = (
+        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    wall_found = env.scene.sensors[wall_sensor].data.found if wall_sensor in env.scene.sensors else None
+    wall_free = (
+        ~((wall_found.view(wall_found.shape[0], -1) > 0).any(dim=-1))
+        if wall_found is not None and wall_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+
+    newly = passed & z_ok & feet_air & wall_free & ~env._wall_flight_paid
+    # Run-8b: the jackpot only counts if the wall is still planted where it
+    # was reset — otherwise "crossing" is just walking through where the
+    # shoved wall used to be (probe 2026-10-02: 8/12 envs did exactly this).
+    newly = newly & ~_wall_displaced(env, asset_name)
+    env._wall_flight_paid = env._wall_flight_paid | newly
+    return newly.float() * payout
+
+
+def wall_critic_obs(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    dist_scale: float = 1.0,
+    lat_scale: float = 0.5,
+) -> torch.Tensor:
+    """CRITIC-ONLY wall-relative observation (run-4 teacher-student fix).
+
+    [signed distance to the wall plane along the robot heading (m) / dist_scale,
+     lateral offset from the wall centerline (m) / lat_scale,
+     passed-the-plane flag]
+
+    The actor stays blind (61-D proprioceptive, wall is training scaffolding);
+    the critic needs this to correctly attribute the wall collision penalty /
+    flight jackpot to the states where they actually fire — otherwise they are
+    sourceless noise and value learning just suppresses the forward region
+    (user diagnosis 2026-10-01).
+    """
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w
+    wpos = wall.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    left = torch.stack((-fwd[:, 1], fwd[:, 0]), dim=1)
+    rel = rpos[:, :2] - wpos[:, :2]
+    dist = (rel * fwd).sum(dim=1) / dist_scale
+    lat = (rel * left).sum(dim=1) / lat_scale
+    passed = (dist > 0).float()
+    return torch.stack((dist, lat, passed), dim=1)
+
+
+def wall_takeoff_shaping(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    zone_near: float = 0.02,
+    zone_far: float = 0.20,
+    vz_scale: float = 0.5,
+    vx_scale: float = 1.2,
+    pitch_min_deg: float = 0.0,
+    pitch_full_deg: float = 0.0,
+    vx_gate: float = 0.0,
+    vz_gate: float = 0.0,
+    feet_sensor: str = "feet_ground_contact",
+    wall_sensor: str = "robot_wall_contact",
+) -> torch.Tensor:
+    """Run-5: DENSE takeoff shaping in front of the wall.
+
+    reward = in_zone × airborne(no feet, no wall contact)
+             × clamp01(vz / vz_scale) × (0.3 + 0.7 × clamp01(vx / vx_scale))
+             × pitch_ramp   (run-8, optional)
+
+    Pays every airborne, rising step inside the approach zone (zone_near..
+    zone_far before the wall plane) — spreading the one-shot flight jackpot
+    (0.2% hit rate, gradient too sparse in run-3/4) into a continuous
+    credit-assignment path: crouch-load, push, rise. Bounded ≤1/step.
+    NaN-safe; missing sensors → zeros.
+
+    Run-8 physics gate: the wall top (0.12 m) is only ~2 cm below the
+    standing COM (~0.146 m), so clearing it in flight is a PITCH problem,
+    not a jump problem — the trunk must already be diving forward
+    (|pitch| ≥ 60°) at takeoff, otherwise the body geometry cannot fit over
+    the 4 cm wall even with vz ≈ 0.5. When pitch_min_deg > 0 the term is
+    multiplied by ramp01(|pitch| from pitch_min_deg to pitch_full_deg);
+    pitch_min_deg = 0 keeps the run-5 behavior unchanged.
+    """
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w
+    vel = torch.nan_to_num(robot.data.root_link_vel_w)
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    # dist is signed (negative while approaching). Zone fix 2026-10-02: the
+    # original (dist >= zone_near) & (dist <= zone_far) selected the region
+    # PAST the wall plane — the shaping paid rising steps after crossing
+    # (where the flight jackpot already pays) instead of the takeoff
+    # approach. Correct zone: zone_near..zone_far BEFORE the wall.
+    in_zone = (dist <= -zone_near) & (dist >= -zone_far)
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    feet_air = (
+        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    wall_found = env.scene.sensors[wall_sensor].data.found if wall_sensor in env.scene.sensors else None
+    wall_free = (
+        ~((wall_found.view(wall_found.shape[0], -1) > 0).any(dim=-1))
+        if wall_found is not None and wall_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+
+    vz = vel[:, 2].clamp(min=0.0)
+    vx = (vel[:, :2] * fwd).sum(dim=1).clamp(min=0.0)
+    base = (
+        in_zone.float()
+        * (feet_air & wall_free).float()
+        * (vz / vz_scale).clamp(max=1.0)
+        * (0.3 + 0.7 * (vx / vx_scale).clamp(max=1.0))
+    )
+    if vx_gate > 0.0:
+        # B8 (2026-10-17): hard forward-speed gate — in-place hops in front
+        # of the wall paid 0.3x drip (B7 probe: 0/8 crossed, hops at z~0.13
+        # with no forward pounce). With the gate, only a takeoff carrying
+        # real forward speed pays at all.
+        base = base * (vx >= vx_gate).float()
+    if vz_gate > 0.0:
+        # B10 (2026-10-17, user: "前扑前没有跳"): a flat forward dive at
+        # ground level briefly satisfies feet_air with tiny positive vz and
+        # farmed this term. Hard gate: takeoff must include a REAL upward
+        # component (vz >= vz_gate) before the pounce counts.
+        base = base * (vz >= vz_gate).float()
+    if pitch_min_deg > 0.0:
+        quat = robot.data.root_link_quat_w
+        qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+        pitch = torch.asin(
+            torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
+        ).abs()
+        p_lo, p_hi = math.radians(pitch_min_deg), math.radians(pitch_full_deg)
+        pitch_ramp = torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
+        base = base * pitch_ramp
+    return base
+
+
+def roulade_flight_pitch(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    pitch_min_deg: float = 15.0,
+    pitch_full_deg: float = 60.0,
+    zone_near: float = -0.40,
+    zone_far: float = 0.45,
+    vx_gate: float = 0.5,
+    feet_sensor: str = "feet_ground_contact",
+    wall_sensor: str = "robot_wall_contact",
+) -> torch.Tensor:
+    """B19 (2026-10-22): flight-phase FORWARD-PITCH posture credit.
+
+    reward = in_window × airborne(no feet, no wall contact) × (vx ≥ vx_gate)
+             × ramp01(|pitch| pitch_min_deg → pitch_full_deg)
+
+    B18 lesson: the roulade over the wall now works (midroll spawn +
+    overhead drive), but the "跳前扑" (leaping pounce) segment is starved —
+    40% midroll spawns diluted the takeoff/flight samples AND nothing paid
+    the flight posture itself. This term pays ONLY the forward-lean pitch
+    during airborne steps near/over the wall plane.
+
+    Deliberately NO rotation factor (B15 lesson: paying airborne rotation
+    invites the whip/spin exploit — spinning in place earns without any
+    forward pounce). Posture is observable from the quaternion alone; the
+    vx gate keeps it tied to real forward flight, not a static tumble.
+
+    in_window: signed fwd distance to wall in [zone_near, zone_far]
+    (defaults −0.40..+0.45 m: takeoff approach through past-wall descent).
+    Bounded ≤1/step, NaN-safe; missing sensors → zeros.
+    """
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w
+    vel = torch.nan_to_num(robot.data.root_link_vel_w)
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    in_window = (dist >= zone_near) & (dist <= zone_far)
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    feet_air = (
+        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    wall_found = env.scene.sensors[wall_sensor].data.found if wall_sensor in env.scene.sensors else None
+    wall_free = (
+        ~((wall_found.view(wall_found.shape[0], -1) > 0).any(dim=-1))
+        if wall_found is not None and wall_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+
+    quat = robot.data.root_link_quat_w
+    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    pitch = torch.asin(
+        torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
+    ).abs()
+    p_lo, p_hi = math.radians(pitch_min_deg), math.radians(pitch_full_deg)
+    pitch_ramp = torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
+
+    vx = (vel[:, :2] * fwd).sum(dim=1)
+    return (
+        in_window.float()
+        * (feet_air & wall_free).float()
+        * (vx >= vx_gate).float()
+        * pitch_ramp
+    )
+
+
+def wall_push_shaping(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "wall",
+    zone_near: float = 0.02,
+    zone_far: float = 0.25,
+    vz_scale: float = 0.3,
+    vx_scale: float = 1.0,
+    vx_gate: float = 0.0,
+    pitch_min_deg: float = 0.0,
+    pitch_full_deg: float = 0.0,
+    feet_sensor: str = "feet_ground_contact",
+    wall_sensor: str = "robot_wall_contact",
+) -> torch.Tensor:
+    """Run-6: GROUNDED push-off credit in front of the wall.
+
+    reward = in_zone × feet_ON_ground × no_wall_contact × clamp01(vz / vz_scale)
+             × (0.3 + 0.7 × clamp01(vx / vx_scale))      (run-14)
+             × ramp01(|pitch| pitch_min→pitch_full)      (run-14, optional)
+
+    Run-13 lesson: with vz-only credit the duck farmed the term via tiny
+    stationary hops in front of the wall (no run-up, no forward dive — it
+    rolled into the wall from a standstill). Run-14 couples the push payoff
+    to forward speed AND a forward pitch ramp (like wall_takeoff_shaping):
+    pitch_min_deg=0 / vx_scale=0 keep run-13 behavior unchanged.
+    Bounded ≤1/step, NaN-safe.
+    """
+    robot: Entity = env.scene["robot"]
+    wall: Entity = env.scene[asset_name]
+    rpos = robot.data.root_link_pose_w
+    vel = torch.nan_to_num(robot.data.root_link_vel_w)
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    # Signed-dist zone fix (see wall_takeoff_shaping): approach side = negative.
+    in_zone = (dist <= -zone_near) & (dist >= -zone_far)
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    feet_on = (
+        (feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1)
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    wall_found = env.scene.sensors[wall_sensor].data.found if wall_sensor in env.scene.sensors else None
+    wall_free = (
+        ~((wall_found.view(wall_found.shape[0], -1) > 0).any(dim=-1))
+        if wall_found is not None and wall_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+
+    vz = vel[:, 2].clamp(min=0.0)
+    vx = (vel[:, :2] * fwd).sum(dim=1).clamp(min=0.0)
+    base = in_zone.float() * (feet_on & wall_free).float()
+    if vx_gate > 0.0:
+        # Stage-4 v3 (user 2026-10-11): hard approach-speed gate — standing
+        # at the wall and pawing it pays ZERO. Kills the "walk up and farm
+        # grounded push" exploit (v2 GIF: no runup, direct roll + kicking).
+        base = base * (vx >= vx_gate).float()
+    if vx_scale > 0.0:
+        base = base * (0.3 + 0.7 * (vx / vx_scale).clamp(max=1.0))
+    if pitch_min_deg > 0.0:
+        quat = robot.data.root_link_quat_w
+        qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+        pitch = torch.asin(
+            torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
+        ).abs()
+        p_lo, p_hi = math.radians(pitch_min_deg), math.radians(pitch_full_deg)
+        pitch_ramp = torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
+        base = base * pitch_ramp
+    return base
+
+
+def hop_forward_credit(
+    env: ManagerBasedRlEnv,
+    vz_scale: float = 0.4,
+    vx_scale: float = 1.0,
+    pitch_min_deg: float = 0.0,
+    pitch_full_deg: float = 0.0,
+    vx_gate: float = 0.0,
+    z_thresh: float = 0.0,
+    feet_sensor: str = "feet_ground_contact",
+) -> torch.Tensor:
+    """Curriculum v2 stage-21 跳远学校 (user 2026-10-05: 重新课程学习).
+
+    18 runs of wall-side shaping failed to bridge grounded push → airborne
+    flight (per-step mutual exclusion: grounded farming always won). School
+    the JUMP itself in isolation, no wall in play. reward per airborne step
+    = clamp01(vz/vz_scale) × (0.3 + 0.7·clamp01(vx/vx_scale)) × pitch_ramp?
+    Teaches UP-and-FORWARD hops; stage-22 adds the pitch ramp (dive jump),
+    stage-23 re-introduces the wall. Bounded ≤1/step, NaN-safe.
+    """
+    robot: Entity = env.scene["robot"]
+    vel = torch.nan_to_num(robot.data.root_link_vel_w)
+    rpos = robot.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    vz = vel[:, 2].clamp(min=0.0)
+    vx = (vel[:, :2] * fwd).sum(dim=1).clamp(min=0.0)
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    airborne = (
+        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+
+    # v4 (2026-10-06 evening verdict): the v3 hard gate (vx<gate -> 0) starved
+    # the gradient — hop_forward sat at ~0.0002 for 6k iters, jumps never
+    # sampled. Now a SOFT gate: below vx_gate the factor ramps linearly
+    # (vx/vx_gate), above it stays 1 — stationary hops pay ~nothing, moving
+    # hops keep a live gradient. Bounded ≤1/step, NaN-safe.
+    if vx_gate > 0:
+        soft = torch.clamp(vx / max(vx_gate, 1e-6), max=1.0)
+        fwd_factor = soft * (vx / vx_scale).clamp(max=1.0)
+    else:
+        fwd_factor = (vx / vx_scale).clamp(max=1.0)
+    base = airborne.float() * (vz / vz_scale).clamp(max=1.0) * fwd_factor
+    if pitch_min_deg > 0.0:
+        quat = robot.data.root_link_quat_w
+        qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+        pitch = torch.asin(
+            torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
+        ).abs()
+        p_lo, p_hi = math.radians(pitch_min_deg), math.radians(pitch_full_deg)
+        base = base * torch.clamp((pitch - p_lo) / max(p_hi - p_lo, 1e-6), 0.0, 1.0)
+    # Phase-A v4 (2026-10-14 14:12 GIF verdict: 跑得飞快但不跳): 跑步弹跳
+    # 的腾空段在蹭本项的分 — 加躯干高度门，z 不超过 z_thresh 的腾空
+    # (跑步弹跳躯干几乎不升高) 零分，只有真蹬伸起跳才计。
+    if z_thresh > 0.0:
+        z = torch.nan_to_num(
+            robot.data.root_link_pos_w[:, 2]
+            - env.scene.terrain.env_origins[:, 2]
+        )
+        base = base * (z > z_thresh).float()
+    return base
+
+
+def air_time_height_credit(
+    env: ManagerBasedRlEnv,
+    z_thresh: float = 0.13,
+    t_min: float = 0.0,
+    t_max: float = 0.5,
+    feet_sensor: str = "feet_ground_contact",
+) -> torch.Tensor:
+    """Phase-A v2 (user 2026-10-14 GIF verdict: 跑步偏离墙、没有跳).
+
+    v4 (14:12 verdict: 跑得飞快但不跳) 重写为"落地结算": 腾空期间不计
+    分，落地那一步结算本次连续腾空时长 t，t < t_min(跑步弹跳 ~0.1s) 零
+    分，t∈[t_min, t_max] 线性计满，另需腾空期间躯干峰值 z 曾超过 z_thresh
+    (真蹬伸起跳)。跑步弹跳(时长短+躯干不升高)彻底清零，只有真跳拿分。
+    有界 ≤1/step，NaN-safe。
+    """
+    robot: Entity = env.scene["robot"]
+    n = env.num_envs
+    dev = env.device
+    z = torch.nan_to_num(
+        robot.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2]
+    )
+    feet_found = (
+        env.scene.sensors[feet_sensor].data.found
+        if feet_sensor in env.scene.sensors else None
+    )
+    airborne = (
+        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(n, dtype=torch.bool, device=dev)
+    )
+    dt = env.step_dt
+    # per-env streak bookkeeping: airborne duration + peak z while airborne
+    if not hasattr(env, "_ath_streak"):
+        env._ath_streak = torch.zeros(n, device=dev)
+        env._ath_peak = z.clone()
+    # BUG FIX (v5 复盘 2026-10-14 20:55): 原实现先重置 streak 再读它结算
+    # — 落地步永远读到 0, 本项恒 0 误导了 v4/v5 两版结论。正确顺序:
+    # 先记住上一状态, 落地结算用 reset 前的 streak。
+    prev_streak = env._ath_streak.clone()
+    prev_airborne = airborne.clone()
+    env._ath_streak = torch.where(
+        airborne, prev_streak + dt, torch.zeros(n, device=dev)
+    )
+    env._ath_peak = torch.where(airborne, torch.maximum(env._ath_peak, z), z)
+    just_landed = (~airborne) & prev_airborne
+    dur = torch.clamp((prev_streak - t_min) / max(t_max - t_min, 1e-6), 0.0, 1.0)
+    return torch.where(
+        just_landed & (env._ath_peak > z_thresh), dur, torch.zeros(n, device=dev)
+    )
+
+
+def overspeed_penalty(
+    env: ManagerBasedRlEnv,
+    vx_limit: float = 0.75,
+    vx_span: float = 0.5,
+) -> torch.Tensor:
+    """Phase-A v4 (2026-10-14 14:12 GIF verdict: 跑得飞快): 超速线性罚。
+
+    vx 超过 vx_limit 后开始罚，超出 vx_span 罚满 1（配合负权重使用）。
+    治"跑步弹空蹭跳分 → 越跑越快"的 reward hacking。
+    """
+    robot: Entity = env.scene["robot"]
+    vel = torch.nan_to_num(robot.data.root_link_vel_w)
+    rpos = robot.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    vx = (vel[:, :2] * fwd).sum(dim=1)
+    return torch.clamp((vx - vx_limit) / max(vx_span, 1e-6), min=0.0, max=1.0)
+
+
+def airborne_flop_penalty(
+    env: ManagerBasedRlEnv,
+    pitch_thresh_deg: float = 50.0,
+    feet_sensor: str = "feet_ground_contact",
+) -> torch.Tensor:
+    """Curriculum v2 stage-21 flop guard (user 2026-10-06: 跑步但是趴下了).
+
+    The stage2e-lineage duck farmed hop_forward_credit with belly-flops
+    (brief vz>0 during the push-off of a forward dive). In jump school a
+    JUMP is upright: any airborne step with pitch beyond threshold costs
+    1.0/step. Stage-22 (dive school) removes this guard — there the pitch
+    IS the lesson.
+    """
+    robot: Entity = env.scene["robot"]
+    quat = robot.data.root_link_quat_w
+    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0)).abs()
+
+    feet_found = env.scene.sensors[feet_sensor].data.found if feet_sensor in env.scene.sensors else None
+    airborne = (
+        ~((feet_found.view(feet_found.shape[0], -1) > 0).any(dim=-1))
+        if feet_found is not None and feet_found.numel() > 0
+        else torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    )
+    return (airborne & (pitch > math.radians(pitch_thresh_deg))).float()
+
+
+def roulade_success_termination(
+    env: ManagerBasedRlEnv,
+    asset_name: str = "robot",
+    wall_name: str = "wall",
+    past_margin: float = 0.35,
+    upright_min: float = 0.80,
+    height_min: float = 0.10,
+) -> torch.Tensor:
+    """Phase-B v22 (user 2026-10-23: "翻过去可以少跑一点"): 过墙 + 站稳 →
+    提前结束 episode。翻滚完成后的长跑不再刷 track_linear_velocity 分 —
+    翻过墙站起来就算完成。
+
+    Conditions (all must hold):
+      ① trunk past the wall plane by `past_margin` (yaw-safe signed dist);
+      ② upright cos (1-2(qy²+qz²)) ≥ `upright_min` (essentially standing);
+      ③ root height ≥ `height_min` (not in a crumpled heap).
+    NaN-safe: NaN states never fire (treated as not-done).
+    """
+    asset: Entity = env.scene[asset_name]
+    try:
+        wall: Entity = env.scene[wall_name]
+    except KeyError:
+        return torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+
+    rpos = asset.data.root_link_pose_w
+    qw, qz = rpos[:, 3], rpos[:, 6]
+    yaw = torch.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
+    fwd = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=1)
+    dist = ((rpos[:, :2] - wall.data.root_link_pose_w[:, :2]) * fwd).sum(dim=1)
+    past = torch.nan_to_num(dist, nan=-1.0) > past_margin
+
+    quat = asset.data.root_link_quat_w
+    upright = 1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
+    upright_ok = torch.nan_to_num(upright, nan=-1.0) >= upright_min
+
+    height_ok = torch.nan_to_num(rpos[:, 2], nan=-1.0) >= height_min
+
+    return past & upright_ok & height_ok
