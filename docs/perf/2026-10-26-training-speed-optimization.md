@@ -89,3 +89,11 @@ scripts/bench_step_phases.py
 1. **njmax=128 已设为 DiveWall 任务默认**（env_cfg 直改，无 flag 生效，43.3k steps/s 复测通过）
 2. **check_for_nan=False 已设默认**——实测 5 iter 无可测差异（1.13-1.14s），但消除每步潜在同步点且环境侧有 nan_state termination 兜底，保留
 3. rsl_rl glue 实测仍有 ~14ms/step（collection 1.05s − env.step 24×29ms ≈ 350ms），下一步用 torch profiler 对 alg.act / process_env_step / logger.process_env_step 逐项计时
+
+## 九、logger D2H 延迟补丁（17:15，待复测）
+
+- 定位：`rsl_rl/utils/logger.py::process_env_step` 每步 `nonzero() + .cpu()` = 强制 GPU 同步，是训练期 GPU util 75%（p50）气泡的来源之一
+- 补丁：per-step 只做 GPU 侧 accumulate，D2H 拉取推迟到每 iter 一次的 `log()`；数值等价（同 mask 同值）
+- 应用方式：直接改 .venv site-packages，diff 存 `patches/rsl_rl-logger-defer-d2h.patch` 可复现
+- 初测 2.96s/iter 无效——GPU 被 mlebench GRPO 评估任务（65% util）抢占，测量污染；待 GPU 空闲后复测
+- GPU util 实测（150 iter 无人抢占时）：p50=75%，p90=100%，均值 82% → 消气泡理论上限 1.25-1.33x
