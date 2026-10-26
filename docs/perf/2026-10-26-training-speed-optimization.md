@@ -83,3 +83,9 @@ scripts/bench_step_phases.py
 | wall_flight / heading_hold / air_time_mean | 0.0051 / 0.4411 / 0.5214 | 0.0050 / 0.4107 / 0.5085 |
 
 **结论：端到端 1.14x（bench 预测 env.step 层 1.27x，learning 0.1s 固定开销摊薄后吻合），学习指标一致（差异在噪声级）。✅ 建议合入正式训练配置。**
+
+## 八、落地记录（15:50）
+
+1. **njmax=128 已设为 DiveWall 任务默认**（env_cfg 直改，无 flag 生效，43.3k steps/s 复测通过）
+2. **check_for_nan=False 已设默认**——实测 5 iter 无可测差异（1.13-1.14s），但消除每步潜在同步点且环境侧有 nan_state termination 兜底，保留
+3. rsl_rl glue 实测仍有 ~14ms/step（collection 1.05s − env.step 24×29ms ≈ 350ms），下一步用 torch profiler 对 alg.act / process_env_step / logger.process_env_step 逐项计时
