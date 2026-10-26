@@ -223,6 +223,10 @@ def make_microduck_roulade_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # ── Base config ───────────────────────────────────────────────────────────
     cfg = make_velocity_env_cfg()
 
+    # Perf 2026-10-26: 实测约束数远低于基类的 1500; njmax=128 → env.step -21%,
+    # 30 iter 短跑指标一致 (见 docs/perf/2026-10-26-training-speed-optimization.md).
+    cfg.sim.njmax = 128
+
     cfg.scene.entities = {"robot": MICRODUCK_STANDUP_ROBOT_CFG}
     cfg.scene.sensors  = (feet_ground_cfg, self_collision_cfg, head_ground_cfg, robot_ground_cfg)
     cfg.viewer.body_name = "trunk_base"
