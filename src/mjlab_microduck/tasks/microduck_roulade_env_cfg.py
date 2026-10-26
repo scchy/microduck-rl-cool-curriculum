@@ -2070,3 +2070,6 @@ MicroduckRouladeDiveRlCfg.run_name = "microduck_roulade_dive_run1"
 MicroduckRouladeDiveWallRlCfg = deepcopy(MicroduckRouladeRlCfg)
 MicroduckRouladeDiveWallRlCfg.experiment_name = "microduck_roulade_dive"
 MicroduckRouladeDiveWallRlCfg.run_name = "microduck_roulade_divewall_run15"
+# Perf 2026-10-26: 每步 NaN 检查 = 每步强制 GPU 同步; 环境侧已有 nan_state
+# termination 兜底, 关闭 runner 层检查 (见 docs/perf/2026-10-26-*.md).
+MicroduckRouladeDiveWallRlCfg.check_for_nan = False
