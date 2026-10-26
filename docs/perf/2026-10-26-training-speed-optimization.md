@@ -97,3 +97,21 @@ scripts/bench_step_phases.py
 - 应用方式：直接改 .venv site-packages，diff 存 `patches/rsl_rl-logger-defer-d2h.patch` 可复现
 - 初测 2.96s/iter 无效——GPU 被 mlebench GRPO 评估任务（65% util）抢占，测量污染；待 GPU 空闲后复测
 - GPU util 实测（150 iter 无人抢占时）：p50=75%，p90=100%，均值 82% → 消气泡理论上限 1.25-1.33x
+
+## 十、单 iteration torch profiler 分析（18:56，GPU 空闲时捕获）
+
+捕获第 5 个 iteration（schedule: skip 3 / wait 1 / active 1），无 profiler 干扰时该 iter ≈ 1.14s。
+
+**总量**：Self CUDA ≈ 695ms vs 墙钟 ~1.1s → **GPU 忙约 60-65%，空闲 35-40%**（dmon 的 75% 含编译期偏高）。
+
+**CUDA 时间构成（自上而下）**：
+| 类别 | 占 CUDA 时间 | 明细 |
+|---|---|---|
+| 物理求解（warp kernels） | ~45% | ccd_kernel_builder 151ms + narrowphase 36ms + site_local_to_global 62ms + cholesky_solve 42ms + body_jac 21ms + efc_contact_jac 9ms 等，120 次调用 = 24 步 × 4 substep + resets |
+| 神经网络（actor/critic 前向+更新） | ~15% | aten::mm/addmm/sgemm ≈ 100ms |
+| **glue 小 kernel（reward/obs 管理器）** | **~35%** | mul×14600 次 15ms、cat×4979 次 9ms、index×4780 12ms、index_put×4288 7ms、copy_×10353 10ms、sum×1400 7ms——**数万次微 kernel 派发** |
+
+**结论**：
+1. GPU 内部最大单项仍是物理（真计算），但其 45% 份额意味着非物理优化空间客观存在
+2. reward/obs 管理器的 glue 在 **kernel 侧**也烧掉了 ~1/3 GPU 时间（此前只测到 CPU 侧 6.7ms）——死项剪枝价值上调
+3. GPU 空闲 35-40% 气泡 = Python 循环 + 微 kernel 派发间隙，靠 CUDA Graph 化 reward/obs 计算可同时吃掉 kernel 数量和气泡
