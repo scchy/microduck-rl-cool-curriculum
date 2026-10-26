@@ -122,3 +122,10 @@ scripts/bench_step_phases.py
 2. **unroll 24→48 证伪（性能侧）**：learning 时间随样本量线性增长（0.101→0.198s），steps/s 零提升（42.6k≈42.5k）。仅影响样本效率/更新频率权衡，属算法实验，不以性能理由合入。
 3. **envs 4096 ✅**：30 iter scratch，collection 1.56s / learning 0.197s / iter ~1.76s → **55.8k steps/s（+31%）**，峰值显存 7.27/12.2 GB，曲线与基线一致。2x envs 仅多 48% collection 时间。
 4. **同卡复合提速：njmax(1.14x) × envs4096(1.31x) ≈ 1.5x 端到端（3h → ~2h/轮）**。合入：跑批 ENVS 2048→4096，首轮盯前 100 iter reward 曲线。
+
+## 十、rollout 瘦身 spike 与收官（2026-10-27 凌晨）
+
+1. **rsl_rl glue 归因修正**：组件级实测 actor 0.17ms / critic 0.10ms / normalizer 0.12ms / log_prob 0.04ms，合计 <0.5ms/step。此前 profiler kernel 视图的"17.4ms rsl_rl glue"归因错误。
+2. **reward 死项缩水**：41 项仅 3 项真死（roulade_sagittal / roulade_lateral_vel / roulade_flatness，~0.5ms）；arrival_damping / joint_torque_rate_l2 为课程延迟激活项（iter 2500/3500 起效），不能剪枝。
+3. **真 glue 位于 mjlab manager 内部**（write/forward/obs/events ~5ms/step），fork 框架性价比不划算。
+4. **最终结论：同卡 1.5x 收官**（njmax 1.14x × envs4096 1.31x；3h→~2h/轮）。原方案表 ②③④⑤ 作废或缩水：②≈1.0x、③≈1.02x、④不验证、⑤已实现其一半（envs4096）。剩余 manager glue 上限 ~1.15x，不做。硬件升级（A100 5-10x）是下一步唯一大头。
