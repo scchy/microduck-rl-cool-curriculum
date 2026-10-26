@@ -115,3 +115,10 @@ scripts/bench_step_phases.py
 1. GPU 内部最大单项仍是物理（真计算），但其 45% 份额意味着非物理优化空间客观存在
 2. reward/obs 管理器的 glue 在 **kernel 侧**也烧掉了 ~1/3 GPU 时间（此前只测到 CPU 侧 6.7ms）——死项剪枝价值上调
 3. GPU 空闲 35-40% 气泡 = Python 循环 + 微 kernel 派发间隙，靠 CUDA Graph 化 reward/obs 计算可同时吃掉 kernel 数量和气泡
+
+## 九、solver 调参与 unroll/envs 补充验证（2026-10-26 晚）
+
+1. **solver 调参证伪**：testspeed 实测 scene.xml（真实接触）——CG 比 Newton 慢 35%（110k vs 168k @512）；iterations 50/30 vs 默认差异噪声级；ls_parallel 本版本不支持。保持 Newton 默认。
+2. **unroll 24→48 证伪（性能侧）**：learning 时间随样本量线性增长（0.101→0.198s），steps/s 零提升（42.6k≈42.5k）。仅影响样本效率/更新频率权衡，属算法实验，不以性能理由合入。
+3. **envs 4096 ✅**：30 iter scratch，collection 1.56s / learning 0.197s / iter ~1.76s → **55.8k steps/s（+31%）**，峰值显存 7.27/12.2 GB，曲线与基线一致。2x envs 仅多 48% collection 时间。
+4. **同卡复合提速：njmax(1.14x) × envs4096(1.31x) ≈ 1.5x 端到端（3h → ~2h/轮）**。合入：跑批 ENVS 2048→4096，首轮盯前 100 iter reward 曲线。
