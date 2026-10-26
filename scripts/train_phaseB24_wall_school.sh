@@ -28,21 +28,36 @@ LOAD_CKPT=model_220469.pt
 MAX_ITER=8000
 
 LOG=logs/train_phaseB24_wall.log
-for ENVS in 2048 1024; do
-  echo "=== [Phase-B v24 midroll0.22+flight_pitch] warm=$LOAD_RUN/$LOAD_CKPT envs=$ENVS max_iter=$MAX_ITER @ $(date) ==="
-  .venv/bin/python -m mjlab_microduck.train_cli Mjlab-RouladeDiveWall-Flat-MicroDuck \
+# ── 性能配置 (2026-10-26 perf 战役, 见 docs/perf/2026-10-26-training-speed-optimization.md) ──
+# 只保留 4096 envs 一档:
+#   1) envs 2048→4096: +31% 吞吐 (42.5k→55.8k steps/s), 峰值显存 7.3/12.2GB (4070Ti 实测)
+#      前提: njmax 已在 env_cfg 默认 128 (原 1500, -21% env.step), check_for_nan=False
+#   2) 2x envs 一次 PPO update 吃 2x 样本 (更新次数不变) — 首轮前 100 iter 盯 reward 曲线,
+#      若与 2048 基线形态偏离明显, 回退方式: 把 ENVS 改回 2048 即可 (无代码依赖)
+#   3) OOM 兜底: 保留单次回落 2048 (不再降 1024 — 实测 2048 也稳定)
+ENVS=4096
+echo "=== [Phase-B v24 midroll0.22+flight_pitch] warm=$LOAD_RUN/$LOAD_CKPT envs=$ENVS max_iter=$MAX_ITER @ $(date) ==="
+.venv/bin/python -m mjlab_microduck.train_cli Mjlab-RouladeDiveWall-Flat-MicroDuck \
     --env.scene.num-envs "$ENVS" \
     --agent.max-iterations "$MAX_ITER" \
     --agent.algorithm.entropy-coef 0.004 \
     --agent.resume True \
     --agent.load-run "$LOAD_RUN" \
     --agent.load-checkpoint "$LOAD_CKPT"
+RC=$?
+if [ "$RC" -ne 0 ]; then
+  echo "[warn] rc=$RC at envs=4096 — falling back to 2048 (OOM guard)"
+  ENVS=2048
+  .venv/bin/python -m mjlab_microduck.train_cli Mjlab-RouladeDiveWall-Flat-MicroDuck \
+      --env.scene.num-envs "$ENVS" \
+      --agent.max-iterations "$MAX_ITER" \
+      --agent.algorithm.entropy-coef 0.004 \
+      --agent.resume True \
+      --agent.load-run "$LOAD_RUN" \
+      --agent.load-checkpoint "$LOAD_CKPT"
   RC=$?
-  echo "=== [Phase-B v24 midroll0.22+flight_pitch rc=$RC] envs=$ENVS @ $(date) ==="
-  [ "$RC" -eq 0 ] && break
-  echo "[warn] rc=$RC at envs=$ENVS — falling back to 1024 (OOM guard)"
-done
-echo "=== Phase-B v24 训练结束 @ $(date) ==="
+fi
+echo "=== [Phase-B v24 midroll0.22+flight_pitch rc=$RC] envs=$ENVS @ $(date) ==="
 
 # 自动出 GIF — 低机位贴墙视角
 RUN_DIR=$(ls -dt logs/rsl_rl/microduck_roulade_dive/2026-*_run15 | head -1)
