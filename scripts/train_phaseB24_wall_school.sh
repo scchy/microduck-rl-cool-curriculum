@@ -23,9 +23,9 @@ export DIVEWALL_PHASE_B21=1
 
 
 
-LOAD_RUN=2026-10-22_21-15-59_microduck_roulade_divewall_run15
-LOAD_CKPT=model_220469.pt
-MAX_ITER=8000
+LOAD_RUN="${LOAD_RUN:-2026-10-22_21-15-59_microduck_roulade_divewall_run15}"  # 可被课程链主脚本覆盖
+LOAD_CKPT="${LOAD_CKPT:-model_220469.pt}"  # 可被课程链主脚本覆盖
+MAX_ITER="${MAX_ITER:-8000}"
 
 LOG=logs/train_phaseB24_wall.log
 # ── 性能配置 (2026-10-26 perf 战役, 见 docs/perf/2026-10-26-training-speed-optimization.md) ──
