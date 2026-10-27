@@ -1869,6 +1869,24 @@ def make_microduck_roulade_divewall_env_cfg(play: bool = False) -> ManagerBasedR
                     "tuck_overrides": TUCK_OVERRIDES,
                 },
             )
+        # ── B18b 补丁 (2026-10-27 21:50, lean-B19 GIF verdict "小跳过墙、
+        # 半翻滚顶地抬脚拿reward", 大人拍板从 B18 重调):
+        #   ① takeoff 陡扑门前移 (pitch 10/45→20/65, w6→12): 小跳无前倾
+        #      角, takeoff 分归零, 逼跑→大角度扑出;
+        #   ② rise/airborne 完成度门 (rise gate 150→260, airborne 180→260):
+        #      半翻滚 (accum<260°) 后的顶地抬脚打挺不再收 rise/airborne
+        #      分, 起身梯度滚完 3/4 圈才解锁, 与 landing 栈同门。
+        #   历史依据: B14 era 曾记 rise 180-260 为死项, 但那是老链;
+        #   lean 链证明低门反而成了套利口。overhead_drive (180-240°)
+        #   保留, 半翻窗口仍有"继续滚"的梯度。
+        if _os.environ.get("DIVEWALL_PHASE_B18B"):
+            cfg.rewards["roulade_wall_takeoff"].params.update(
+                {"pitch_min_deg": 20.0, "pitch_full_deg": 65.0})
+            cfg.rewards["roulade_wall_takeoff"].weight = 12.0
+            if "roulade_rise_velocity" in cfg.rewards:
+                cfg.rewards["roulade_rise_velocity"].params["gate_lo"] = math.radians(260.0)
+            if "roulade_airborne" in cfg.rewards:
+                cfg.rewards["roulade_airborne"].params["gate_lo"] = math.radians(260.0)
         # ── Phase-B v19 (2026-10-22, B18 验收"翻滚成立、跳前扑不足") ──
         # 小改动路线 (大人 09:45 拍板): B18 全配置 + 两项叠加:
         #   ① midroll spawn 0.4 → 0.22 (脚本 env 覆盖, 本块不改): B18 的
