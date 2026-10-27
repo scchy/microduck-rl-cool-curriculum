@@ -1,3 +1,13 @@
+# Micro Duck RL — Cool Tricks Series 🦆
+
+> This fork trains a **series of cool tricks** for the Micro Duck robot with staged reward curricula. New tricks will be added here over time.
+>
+> **Released: Roulade Wall-Jump curriculum (0.5cm → 5cm walls)** — approach → jump school → wall school → stand-up chain → midroll → steep dive. Demo & checkpoints on [Hugging Face](https://huggingface.co/SccHy/microduck-rl-cool-curriculum).
+>
+> Training entry: `scripts/train_curriculum_lean_to_5cm.sh`
+
+---
+
 # Microduck RL
 
 <img width="2215" height="884" alt="image" src="https://github.com/user-attachments/assets/5db7cc83-b3ce-4f7c-83f0-0572a63baed7" />
