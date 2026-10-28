@@ -22,6 +22,7 @@ for ENVS in ${ENVS_LIST:-4096 2048}; do  # perf: 2026-10-27 起 4096 档 (+31%),
   echo "=== [Phase-B v12 jump-roll chain] warm=$LOAD_RUN/$LOAD_CKPT envs=$ENVS max_iter=$MAX_ITER @ $(date) ==="
   .venv/bin/python -m mjlab_microduck.train_cli Mjlab-RouladeDiveWall-Flat-MicroDuck \
     --env.scene.num-envs "$ENVS" \
+    --env.sim.njmax 144 \
     --agent.max-iterations "$MAX_ITER" \
     --agent.algorithm.entropy-coef 0.004 \
     --agent.resume True \
