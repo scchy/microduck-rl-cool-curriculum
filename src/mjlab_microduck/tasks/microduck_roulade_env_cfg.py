@@ -225,7 +225,10 @@ def make_microduck_roulade_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
     # Perf 2026-10-26: 实测约束数远低于基类的 1500; njmax=128 → env.step -21%,
     # 30 iter 短跑指标一致 (见 docs/perf/2026-10-26-training-speed-optimization.md).
-    cfg.sim.njmax = 128
+    # DIVEWALL_NJMAX_NONE=1 (2026-10-29 replica3): 复刻原版 B18 的 None→
+    # mjwarp 启发式 njmax — 原版成功时用的是这个裁剪物理, 不是 128 也不是 1500.
+    if not _os.environ.get("DIVEWALL_NJMAX_NONE"):
+        cfg.sim.njmax = 128
 
     cfg.scene.entities = {"robot": MICRODUCK_STANDUP_ROBOT_CFG}
     cfg.scene.sensors  = (feet_ground_cfg, self_collision_cfg, head_ground_cfg, robot_ground_cfg)
