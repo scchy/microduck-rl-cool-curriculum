@@ -1887,6 +1887,24 @@ def make_microduck_roulade_divewall_env_cfg(play: bool = False) -> ManagerBasedR
                 cfg.rewards["roulade_rise_velocity"].params["gate_lo"] = math.radians(260.0)
             if "roulade_airborne" in cfg.rewards:
                 cfg.rewards["roulade_airborne"].params["gate_lo"] = math.radians(260.0)
+        # ── B18c 补丁 (2026-10-29, B18b GIF verdict "头顶地+脚蹬地划过墙,
+        # 无翻滚": rise/airborne 260° 门已生效但过墙三件套不看翻滚, 作弊
+        # 路径 takeoff(w12)+飞行jackpot+过墙年金照单全收). 两手抓:
+        #   ① 飞行 jackpot 延迟支付 (roll_gate 150→260°+head latch):
+        #      墙前飞行划过只 latch 不给钱, 翻滚真完成后一次性支付 —
+        #      过墙年金 (air_cross_gate 接同一 latch) 随之自动锁死;
+        #   ② roulade_headstand_penalty (w 2.0): 头触地+倒置(up_z<-0.707)
+        #      +frontier<100° 每步罚 — 真翻滚经过倒置段时 accum 已>90°,
+        #      不误伤; 静态倒立/蹬地滑行则持续流血。作弊口袋变坑。
+        # takeoff 陡扑门维持 B18b (20/65°+w12) 不动 — 那是正确行为的梯度。
+        if _os.environ.get("DIVEWALL_PHASE_B18C"):
+            cfg.rewards["roulade_wall_flight"].params.update(
+                {"roll_gate_lo_deg": 150.0, "roll_gate_hi_deg": 260.0})
+            cfg.rewards["roulade_headstand_penalty"] = RewardTermCfg(
+                func=microduck_mdp.roulade_headstand_penalty,
+                weight=2.0,
+                params={"pitch_min_deg": 135.0, "accum_max_deg": 100.0},
+            )
         # ── Phase-B v19 (2026-10-22, B18 验收"翻滚成立、跳前扑不足") ──
         # 小改动路线 (大人 09:45 拍板): B18 全配置 + 两项叠加:
         #   ① midroll spawn 0.4 → 0.22 (脚本 env 覆盖, 本块不改): B18 的

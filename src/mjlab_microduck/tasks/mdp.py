@@ -7398,6 +7398,42 @@ def roulade_airborne(
     return airborne.float() * quality * gate * (z < max_height).float()
 
 
+def roulade_headstand_penalty(
+    env: ManagerBasedRlEnv,
+    pitch_min_deg: float = 135.0,
+    accum_max_deg: float = 100.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """B18c (2026-10-29): per-step penalty for the head-stand + foot-push
+    SLIDE cheat (B18/B18b GIF verdict: 头顶地, 脚蹬地, 划过墙, 无翻滚).
+
+    Fires when: head contact + supported + |pitch| > pitch_min_deg (body
+    INVERTED, standing on its head) + frontier < accum_max_deg (essentially
+    no roll accumulated). In a genuine roulade the robot is only inverted
+    while the accumulator is already ~90-180° (it got there BY rolling), so
+    the legitimate roll never pays this tax; only the static head-stand
+    (balance on head, push with feet) does.
+
+    Pairs with the B18c deferred flight jackpot: the slide earns zero
+    crossing credit AND bleeds while inverted — the exploit pocket is now
+    a pit.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_roulade_accum(env, asset)
+    head_contact = _sensor_any_contact(env, _ROULADE_HEAD_SENSOR)
+    if head_contact is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    # Inversion via the body UP axis (world-z of the local +z axis):
+    # +1 upright, -1 fully inverted. NOTE: Euler-pitch asin() wraps to 0 at
+    # 180° and cannot see a head-stand — this is why the axis is used.
+    quat = asset.data.root_link_quat_w
+    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    up_z = 1.0 - 2.0 * (qx * qx + qy * qy)
+    inverted = up_z < math.cos(math.radians(min(pitch_min_deg, 179.0)))
+    not_rolled = env._roulade_max < math.radians(accum_max_deg)
+    return (head_contact & inverted & not_rolled).float()
+
+
 def roulade_dive_launch(
     env: ManagerBasedRlEnv,
     vx_lo: float = 0.1,
@@ -7827,6 +7863,9 @@ def reset_wall_ahead(
     # Per-episode flight-clear latch (see wall_flight_clear_bonus).
     if hasattr(env, "_wall_flight_paid"):
         env._wall_flight_paid[env_ids] = False
+    # B18c: deferred-payout crossing latch resets with it.
+    if hasattr(env, "_wall_flight_crossed"):
+        env._wall_flight_crossed[env_ids] = False
     # Run-8b: remember the planted pose — shove detection / planted gating.
     if not hasattr(env, "_wall_spawn_pose"):
         env._wall_spawn_pose = torch.zeros(
@@ -8329,6 +8368,8 @@ def wall_flight_clear_bonus(
     feet_sensor: str = "feet_ground_contact",
     wall_sensor: str = "robot_wall_contact",
     payout: float = 1.0,
+    roll_gate_lo_deg: float = 0.0,
+    roll_gate_hi_deg: float = 0.0,
 ) -> torch.Tensor:
     """Run-3: ONE-SHOT bonus for clearing the wall plane IN FLIGHT.
 
@@ -8341,6 +8382,14 @@ def wall_flight_clear_bonus(
     Run-2 lesson: the per-step cleared bonus only rewarded "being past the
     wall" (standing z 0.115 > 0.06 always true) — the crossing itself was
     never paid, so the cheapest crossing (roll onto the wall) won.
+
+    B18c (2026-10-29) DEFERRED PAYOUT: with roll_gate_hi_deg > 0 the flight
+    crossing is latched as before, but the jackpot only PAYS once the
+    roulade completion gate opens (frontier + head latch). Kills the
+    head-plant + foot-push slide exploit (B18/B18b verdict: 头顶地蹬地划
+    过墙, 全程无翻滚, 依旧全收 takeoff/jackpot/cleared): crossing without
+    rolling earns ZERO — the flight credit becomes contingent on the roll
+    it exists to set up.
     """
     if not hasattr(env, "_wall_flight_paid"):
         env._wall_flight_paid = torch.zeros(
@@ -8374,6 +8423,21 @@ def wall_flight_clear_bonus(
     # was reset — otherwise "crossing" is just walking through where the
     # shoved wall used to be (probe 2026-10-02: 8/12 envs did exactly this).
     newly = newly & ~_wall_displaced(env, asset_name)
+    if roll_gate_hi_deg > 0.0:
+        # B18c deferred payout: latch the flight crossing separately; pay
+        # only when the roll actually completes (completion gate is a
+        # smoothstep — pay at the first step it opens past halfway).
+        if not hasattr(env, "_wall_flight_crossed"):
+            env._wall_flight_crossed = torch.zeros(
+                env.num_envs, dtype=torch.bool, device=env.device
+            )
+        env._wall_flight_crossed = env._wall_flight_crossed | newly
+        _update_roulade_accum(env, robot)
+        gate = _roulade_completion_gate(
+            env, math.radians(roll_gate_lo_deg), math.radians(roll_gate_hi_deg),
+            require_head=True,
+        )
+        newly = env._wall_flight_crossed & (gate > 0.5) & ~env._wall_flight_paid
     env._wall_flight_paid = env._wall_flight_paid | newly
     return newly.float() * payout
 
