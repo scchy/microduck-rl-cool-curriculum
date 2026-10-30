@@ -1908,6 +1908,10 @@ def make_microduck_roulade_divewall_env_cfg(play: bool = False) -> ManagerBasedR
                 weight=2.0,
                 params={"pitch_min_deg": 135.0, "accum_max_deg": 100.0},
             )
+        # ── B18D (2026-10-30, 已废弃): B14+续滚三件套路线, 8000 iter 训完
+        # reward 35.7, GIF verdict 不符合预期, 大人 13:29 拍板删除。产物已移
+        # ../trash_b18d_20261030/。教训: 无 midroll 的纯 reward 杠杆 (扩窗
+        # overhead_drive + 延迟 jackpot + headstand 罚) 不足以带出第二阶段。
         # ── Phase-B v19 (2026-10-22, B18 验收"翻滚成立、跳前扑不足") ──
         # 小改动路线 (大人 09:45 拍板): B18 全配置 + 两项叠加:
         #   ① midroll spawn 0.4 → 0.22 (脚本 env 覆盖, 本块不改): B18 的
