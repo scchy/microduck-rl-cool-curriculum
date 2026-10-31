@@ -24,7 +24,11 @@ cd "$(dirname "$0")/.." || exit 1
 RUNS_DIR=logs/rsl_rl/microduck_roulade_dive
 
 # 最小成功路线 12 轮 (A5/B12b 巩固轮按验收结果手动插入)
-STAGES=(A3 A4 B5 B7 B11 B12 B14 B18 B19 B20 B21 B24)
+# v2 谱系 (2026-10-31 对齐实际成功路线): B18 之后走 v2 脚本, 终点 = B22v2 5cm。
+# ⚠ B18 注意: 实际成功的 B18 是 git worktree @00cd9b6 (原版代码: nan guard
+# 默认开 + njmax 启发式) 跑出来的; 在 HEAD 代码上跑 B18 需确认默认未漂移
+# (见迭代史第七幕五连败教训)。
+STAGES=(A3 A4 B5 B7 B11 B12 B14 B18 B19v2 B20v2 B21v2 B22v2)
 declare -A SCRIPT=(
   [A3]=train_phaseA3_jump_school.sh   # 跳学校: hop 15/track 1/航向锚定
   [A4]=train_phaseA4_jump_school.sh   # 跳学校毕业: 落地结算+高度门+超速罚
@@ -34,10 +38,10 @@ declare -A SCRIPT=(
   [B12]=train_phaseB12_wall_school.sh # 起身链激活: rise gate 150°/180°
   [B14]=train_phaseB14_wall_school.sh # preroll_kick, warm 回接 B12 能力已证 ckpt
   [B18]=train_phaseB18_wall_school.sh # 反向课程: midroll 0.4 + overhead_drive
-  [B19]=train_phaseB19_wall_school.sh # 全链成立: midroll 0.22 + flight_pitch
-  [B20]=train_phaseB20_wall_school.sh # 陡扑门 20/65° + takeoff 权重×2
-  [B21]=train_phaseB21_wall_school.sh # 3.5cm 墙 (SINK 0.085)
-  [B24]=train_phaseB24_wall_school.sh # 5cm 墙 (SINK 0.070) ← 最终目标
+  [B19v2]=train_phaseB19v2_wall_school.sh # 全链成立: midroll 0.22 + flight_pitch + NJMAX_NONE/B18B=0 修正
+  [B20v2]=train_phaseB20v2_wall_school.sh # 陡扑门 20/65° + takeoff 权重×2 (v2 对齐 worktree 物理)
+  [B21v2]=train_phaseB21v2_wall_school.sh # 3.5cm 墙 (SINK 0.085), reward 零改动
+  [B22v2]=train_phaseB22v2_5cm_wall.sh # 5cm 终点 (SINK 0.070) ← 最终目标 (2026-10-31 收官, reward 79.4)
 )
 declare -A EXPECT=(  # 验收要点 (GIF)
   [A3]="朝墙跑+真跳"
@@ -48,10 +52,10 @@ declare -A EXPECT=(  # 验收要点 (GIF)
   [B12]="首次过墙后站起来"
   [B14]="frontier 冲过 ~130°"
   [B18]="起身链贯通"
-  [B19]="跑→跳扑→滚→跑 全链"
-  [B20]="陡扑姿态稳定"
-  [B21]="3.5cm 全链稳定"
-  [B24]="5cm 全链稳定, mean reward 持平无回撤"
+  [B19v2]="跑→跳扑→滚→跑 全链"
+  [B20v2]="陡扑姿态稳定"
+  [B21v2]="3.5cm 全链稳定"
+  [B22v2]="5cm 全链稳定 (已验收: reward 79.4 新高)"
 )
 
 latest_run()  { ls -dt "$RUNS_DIR"/2026-* 2>/dev/null | head -1; }
